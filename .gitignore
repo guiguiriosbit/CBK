@@ -1,0 +1,8 @@
+# Dependencias
+node_modules/
+
+# Variables de entorno locales
+.env.local
+
+# Carpeta de scripts locales
+scripts/
