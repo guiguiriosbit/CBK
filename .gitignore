@@ -6,3 +6,5 @@ node_modules/
 
 # Carpeta de scripts locales
 scripts/
+
+.next/
