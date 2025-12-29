@@ -1,7 +1,7 @@
 "use client"
 
 import type React from "react"
-
+import { getUserProfile } from "@/app/actions/auth"
 import { createClient } from "@/lib/supabase/client"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -27,14 +27,28 @@ export default function LoginPage() {
     const supabase = createClient()
     setIsLoading(true)
     setError(null)
-
+  
     try {
-      const { error } = await supabase.auth.signInWithPassword({
+      const { data, error } = await supabase.auth.signInWithPassword({
         email,
         password,
       })
       if (error) throw error
-      router.push("/cliente/dashboard")
+  
+      // CONSULTA EL PERFIL DESPUÉS DEL LOGIN
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("role")
+        .eq("id", data.user.id)
+        .single()
+  
+      // REDIRECCIÓN CONDICIONAL
+      if (profile?.role === 'admin') {
+        router.push("/admin/dashboard")
+      } else {
+        router.push("/cliente/dashboard")
+      }
+      
       router.refresh()
     } catch (error: unknown) {
       setError(error instanceof Error ? error.message : "Error al iniciar sesión")

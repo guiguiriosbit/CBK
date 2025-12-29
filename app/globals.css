@@ -124,3 +124,18 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* Elimina el botón flotante de Next/v0 */
+/* app/globals.css */
+
+/* Forzar la desaparición de indicadores de desarrollo y feedback */
+#__next-v0-container, 
+.v0-feedback-button,
+#vercel-live-feedback,
+[data-nextjs-toast],
+[data-vercel-feedback-button],
+.nextjs-toast-errors-parent {
+  display: none !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+}

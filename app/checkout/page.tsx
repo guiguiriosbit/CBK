@@ -9,12 +9,12 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Separator } from "@/components/ui/separator"
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { MapPin, CreditCard, CheckCircle } from "lucide-react"
 import Image from "next/image"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
+import { CheckoutWrapper } from "@/components/checkout/checkout-wrapper"
 
 interface CartItem {
   id: string
@@ -45,6 +45,8 @@ export default function CheckoutPage() {
   const [isProcessing, setIsProcessing] = useState(false)
   const [orderComplete, setOrderComplete] = useState(false)
   const [orderId, setOrderId] = useState<string | null>(null)
+  const [currentOrderId, setCurrentOrderId] = useState<string | null>(null)
+  const [paymentStep, setPaymentStep] = useState<'address' | 'payment'>('address')
   const router = useRouter()
 
   const [shippingAddress, setShippingAddress] = useState<ShippingAddress>({
@@ -123,7 +125,7 @@ export default function CheckoutPage() {
     return calculateSubtotal() + calculateShipping()
   }
 
-  const handlePlaceOrder = async () => {
+  const handleContinueToPayment = async () => {
     if (
       !shippingAddress.address_line1 ||
       !shippingAddress.city ||
@@ -193,6 +195,69 @@ export default function CheckoutPage() {
 
       if (itemsError) throw itemsError
 
+      setCurrentOrderId(order.id)
+      setPaymentStep('payment')
+      toast.success("Dirección guardada. Procede con el pago")
+    } catch (error: any) {
+      console.error("[v0] Error creating order:", error)
+      const errorMessage = error?.message || error?.error || "Error al procesar el pedido"
+      toast.error(errorMessage)
+      
+      // Mostrar detalles del error en desarrollo
+      if (process.env.NODE_ENV === 'development') {
+        console.error("Detalles del error:", {
+          error,
+          message: error?.message,
+          details: error?.details,
+          hint: error?.hint,
+          code: error?.code
+        })
+      }
+    } finally {
+      setIsProcessing(false)
+    }
+  }
+
+  const handlePaymentSuccess = async (paymentIntentId: string) => {
+    if (!currentOrderId) return
+
+    setIsProcessing(true)
+    const supabase = createClient()
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+
+    if (!user) {
+      router.push("/auth/login")
+      return
+    }
+
+    try {
+      // Actualizar transacción en la base de datos
+      const { error: transactionError } = await supabase
+        .from("transactions")
+        .update({
+          status: "succeeded",
+          completed_at: new Date().toISOString(),
+        })
+        .eq("stripe_payment_intent_id", paymentIntentId)
+        .eq("user_id", user.id)
+
+      if (transactionError) {
+        console.error("Error actualizando transacción:", transactionError)
+      }
+
+      // Actualizar pedido a pagado
+      const { error: orderError } = await supabase
+        .from("orders")
+        .update({
+          payment_status: "paid",
+          status: "processing",
+        })
+        .eq("id", currentOrderId)
+
+      if (orderError) throw orderError
+
       // Actualizar stock de productos
       for (const item of cartItems) {
         const { error: stockError } = await supabase.rpc("decrement_product_stock", {
@@ -201,25 +266,37 @@ export default function CheckoutPage() {
         })
         // Si no existe la función, actualizar manualmente
         if (stockError) {
-          await supabase
+          const { error: updateError } = await supabase
             .from("products")
             .update({ stock: item.products.stock - item.quantity })
             .eq("id", item.product_id)
+          
+          if (updateError) {
+            console.error(`Error actualizando stock del producto ${item.product_id}:`, updateError)
+          }
         }
       }
 
       // Limpiar carrito
-      await supabase.from("cart_items").delete().eq("user_id", user.id)
+      const { error: cartError } = await supabase.from("cart_items").delete().eq("user_id", user.id)
+      
+      if (cartError) {
+        console.error("Error limpiando carrito:", cartError)
+      }
 
-      setOrderId(order.id)
+      setOrderId(currentOrderId)
       setOrderComplete(true)
-      toast.success("Pedido realizado exitosamente")
+      toast.success("¡Pago procesado exitosamente!")
     } catch (error) {
-      console.error("[v0] Error placing order:", error)
-      toast.error("Error al procesar el pedido")
+      console.error("[v0] Error completing order:", error)
+      toast.error("Error al completar el pedido. Por favor, contacta con soporte.")
     } finally {
       setIsProcessing(false)
     }
+  }
+
+  const handlePaymentError = (error: string) => {
+    toast.error(error || "Error al procesar el pago")
   }
 
   if (isLoading) {
@@ -361,29 +438,46 @@ export default function CheckoutPage() {
               </Card>
 
               {/* Payment Method */}
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <CreditCard className="h-5 w-5" />
-                    Método de Pago
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <RadioGroup defaultValue="pending">
-                    <div className="flex items-center space-x-2 rounded-lg border border-border p-4">
-                      <RadioGroupItem value="pending" id="pending" />
-                      <Label htmlFor="pending" className="flex-1 cursor-pointer">
-                        <div>
-                          <p className="font-medium">Pago Pendiente</p>
-                          <p className="text-sm text-muted-foreground">
-                            La pasarela de pagos se configurará próximamente
-                          </p>
-                        </div>
-                      </Label>
+              {paymentStep === 'payment' && currentOrderId && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2">
+                      <CreditCard className="h-5 w-5" />
+                      Método de Pago
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <CheckoutWrapper
+                      amount={calculateTotal()}
+                      currency="mxn"
+                      description={`Pedido #${currentOrderId.slice(0, 8)}`}
+                      metadata={{
+                        orderId: currentOrderId,
+                      }}
+                      onSuccess={handlePaymentSuccess}
+                      onError={handlePaymentError}
+                    />
+                  </CardContent>
+                </Card>
+              )}
+
+              {paymentStep === 'address' && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2">
+                      <CreditCard className="h-5 w-5" />
+                      Método de Pago
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="rounded-lg border border-border p-4">
+                      <p className="text-sm text-muted-foreground">
+                        Completa la dirección de envío para continuar con el pago
+                      </p>
                     </div>
-                  </RadioGroup>
-                </CardContent>
-              </Card>
+                  </CardContent>
+                </Card>
+              )}
 
               {/* Order Notes */}
               <Card>
@@ -458,14 +552,26 @@ export default function CheckoutPage() {
                   </div>
                 </div>
 
-                <Button
-                  className="w-full bg-primary hover:bg-primary/90"
-                  size="lg"
-                  onClick={handlePlaceOrder}
-                  disabled={isProcessing}
-                >
-                  {isProcessing ? "Procesando..." : "Realizar Pedido"}
-                </Button>
+                {paymentStep === 'address' ? (
+                  <Button
+                    className="w-full bg-primary hover:bg-primary/90"
+                    size="lg"
+                    onClick={handleContinueToPayment}
+                    disabled={isProcessing}
+                  >
+                    {isProcessing ? "Procesando..." : "Continuar con el Pago"}
+                  </Button>
+                ) : (
+                  <Button
+                    variant="outline"
+                    className="w-full bg-transparent"
+                    size="lg"
+                    onClick={() => setPaymentStep('address')}
+                    disabled={isProcessing}
+                  >
+                    Volver a Dirección
+                  </Button>
+                )}
 
                 <p className="text-center text-xs text-muted-foreground">
                   Al realizar el pedido, aceptas nuestros términos y condiciones

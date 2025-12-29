@@ -40,27 +40,6 @@ export default function RootLayout({
   return (
     <html lang="es">
       <body className="font-sans antialiased">
-        {/* Script para forzar la eliminación de botones de feedback de v0/Vercel */}
-        <script
-          dangerouslySetInnerHTML={{
-            __html: `
-              const observer = new MutationObserver(() => {
-                const selectors = [
-                  '#__next-v0-container',
-                  '.v0-feedback-button',
-                  '#vercel-live-feedback',
-                  '[data-nextjs-toast]',
-                  '[data-vercel-feedback-button]'
-                ];
-                selectors.forEach(selector => {
-                  const el = document.querySelector(selector);
-                  if (el) el.remove();
-                });
-              });
-              observer.observe(document.body, { childList: true, subtree: true });
-            `,
-          }}
-        />
         {children}
         <Analytics />
       </body>
