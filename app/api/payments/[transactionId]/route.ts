@@ -4,9 +4,10 @@ import { createClient } from '@/lib/supabase/server';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { transactionId: string } }
+  { params }: { params: Promise<{ transactionId: string }> }
 ) {
   try {
+    const { transactionId } = await params;
     const supabase = await createClient();
     
     const { data: { user }, error: authError } = await supabase.auth.getUser();
@@ -20,7 +21,7 @@ export async function GET(
     const { data: transaction, error } = await supabase
       .from('transactions')
       .select('*')
-      .eq('id', params.transactionId)
+      .eq('id', transactionId)
       .eq('user_id', user.id)
       .single();
 

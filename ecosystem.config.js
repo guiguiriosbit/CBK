@@ -9,6 +9,9 @@ module.exports = {
       NODE_ENV: 'production',
       PORT: 3000
     },
+    // Las rutas de logs se configurarán en el servidor según el dominio
+    // error_file: '/home/usuario/domains/tienda.tu-dominio.com/logs/pm2-error.log',
+    // out_file: '/home/usuario/domains/tienda.tu-dominio.com/logs/pm2-out.log',
     error_file: './logs/pm2-error.log',
     out_file: './logs/pm2-out.log',
     log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
@@ -18,5 +21,7 @@ module.exports = {
     max_memory_restart: '1G'
   }]
 };
+
+
 
 
