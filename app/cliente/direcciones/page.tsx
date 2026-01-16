@@ -21,6 +21,8 @@ import { useRouter } from "next/navigation"
 import { toast } from "sonner"
 import { ArrowLeft, MapPin, Plus, Trash2, Star } from "lucide-react"
 import Link from "next/link"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { COUNTRIES } from "@/lib/countries"
 
 interface Address {
   id: string
@@ -46,7 +48,7 @@ export default function DireccionesPage() {
     city: "",
     state: "",
     postal_code: "",
-    country: "México",
+    country: "",
   })
 
   useEffect(() => {
@@ -83,7 +85,7 @@ export default function DireccionesPage() {
 
   const handleAddAddress = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!newAddress.address_line1 || !newAddress.city || !newAddress.state || !newAddress.postal_code) {
+    if (!newAddress.address_line1 || !newAddress.city || !newAddress.state || !newAddress.postal_code || !newAddress.country) {
       toast.error("Por favor completa todos los campos requeridos")
       return
     }
@@ -253,8 +255,22 @@ export default function DireccionesPage() {
                   />
                 </div>
                 <div className="grid gap-2">
-                  <Label htmlFor="country">País</Label>
-                  <Input id="country" value={newAddress.country} disabled />
+                  <Label htmlFor="country">País *</Label>
+                  <Select
+                    value={newAddress.country}
+                    onValueChange={(value) => setNewAddress({ ...newAddress, country: value })}
+                  >
+                    <SelectTrigger id="country">
+                      <SelectValue placeholder="Selecciona un país" />
+                    </SelectTrigger>
+                    <SelectContent className="max-h-[300px]">
+                      {COUNTRIES.map((country) => (
+                        <SelectItem key={country.code} value={country.name}>
+                          {country.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
               </div>
               <Button type="submit" className="w-full bg-primary hover:bg-primary/90" disabled={isSaving}>

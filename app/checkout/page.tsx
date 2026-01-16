@@ -15,6 +15,8 @@ import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
 import { CheckoutWrapper } from "@/components/checkout/checkout-wrapper"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { COUNTRIES } from "@/lib/countries"
 
 interface CartItem {
   id: string
@@ -55,7 +57,7 @@ export default function CheckoutPage() {
     city: "",
     state: "",
     postal_code: "",
-    country: "México",
+    country: "",
   })
 
   const [notes, setNotes] = useState("")
@@ -107,7 +109,16 @@ export default function CheckoutPage() {
       .single()
 
     if (addresses) {
-      setShippingAddress(addresses)
+      setShippingAddress({
+        ...addresses,
+        country: addresses.country || ""
+      })
+    } else {
+      // Si no hay dirección por defecto, establecer México como predeterminado
+      setShippingAddress(prev => ({
+        ...prev,
+        country: prev.country || "México"
+      }))
     }
 
     setIsLoading(false)
@@ -130,7 +141,8 @@ export default function CheckoutPage() {
       !shippingAddress.address_line1 ||
       !shippingAddress.city ||
       !shippingAddress.state ||
-      !shippingAddress.postal_code
+      !shippingAddress.postal_code ||
+      !shippingAddress.country
     ) {
       toast.error("Por favor completa todos los campos de dirección")
       return
@@ -429,8 +441,22 @@ export default function CheckoutPage() {
                         />
                       </div>
                       <div className="grid gap-2">
-                        <Label htmlFor="country">País</Label>
-                        <Input id="country" value={shippingAddress.country} disabled />
+                        <Label htmlFor="country">País *</Label>
+                        <Select
+                          value={shippingAddress.country}
+                          onValueChange={(value) => setShippingAddress({ ...shippingAddress, country: value })}
+                        >
+                          <SelectTrigger id="country">
+                            <SelectValue placeholder="Selecciona un país" />
+                          </SelectTrigger>
+                          <SelectContent className="max-h-[300px]">
+                            {COUNTRIES.map((country) => (
+                              <SelectItem key={country.code} value={country.name}>
+                                {country.name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
                       </div>
                     </div>
                   </div>

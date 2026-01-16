@@ -36,11 +36,14 @@ export async function POST(request: NextRequest) {
     }
 
     // Crear Payment Intent en Stripe
+    // Stripe acepta pagos de cualquier país por defecto
+    // No hay restricciones geográficas configuradas
     const paymentIntent = await stripe.paymentIntents.create({
       amount: Math.round(amount * 100), // Stripe usa centavos
       currency,
       description,
       receipt_email: user.email,
+      // No configuramos restricciones de país - acepta pagos de cualquier país
       metadata: {
         userId: user.id,
         userEmail: user.email!,

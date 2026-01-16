@@ -6,7 +6,9 @@
     "build": "next build",
     "dev": "next dev",
     "lint": "eslint .",
-    "start": "next start"
+    "start": "next start",
+    "verify:supabase": "node scripts/verificar-supabase.js",
+    "verify:stripe": "node scripts/verificar-stripe.js"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
@@ -70,6 +72,7 @@
     "@types/node": "^22",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "dotenv": "^17.2.3",
     "postcss": "^8.5",
     "tailwindcss": "^4.1.9",
     "tw-animate-css": "1.3.3",

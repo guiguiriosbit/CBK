@@ -11,15 +11,18 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { useState } from "react"
-import { Snowflake, Mail } from "lucide-react"
+import { Snowflake, Mail, MessageCircle } from "lucide-react"
+import { toast } from "sonner"
 
 export default function LoginPage() {
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [otpEmail, setOtpEmail] = useState("")
+  const [otpPhone, setOtpPhone] = useState("")
   const [error, setError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [otpSent, setOtpSent] = useState(false)
+  const [otpMethod, setOtpMethod] = useState<"email" | "whatsapp">("email")
   const router = useRouter()
 
   const handlePasswordLogin = async (e: React.FormEvent) => {
@@ -64,17 +67,34 @@ export default function LoginPage() {
     setError(null)
 
     try {
-      const { error } = await supabase.auth.signInWithOtp({
-        email: otpEmail,
-        options: {
-          emailRedirectTo:
-            process.env.NEXT_PUBLIC_DEV_SUPABASE_REDIRECT_URL || `${window.location.origin}/cliente/dashboard`,
-        },
-      })
-      if (error) throw error
-      setOtpSent(true)
+      if (otpMethod === "email") {
+        if (!otpEmail) {
+          throw new Error("Por favor ingresa tu correo electrónico")
+        }
+
+        const { error } = await supabase.auth.signInWithOtp({
+          email: otpEmail,
+          options: {
+            emailRedirectTo:
+              process.env.NEXT_PUBLIC_DEV_SUPABASE_REDIRECT_URL || `${window.location.origin}/cliente/dashboard`,
+            shouldCreateUser: true, // Permitir crear usuario si no existe
+          },
+        })
+        
+        if (error) throw error
+        
+        toast.success("Código OTP enviado. Revisa tu correo.")
+        // Redirigir a la página de verificación OTP
+        router.push(`/auth/verificar-otp?email=${encodeURIComponent(otpEmail)}`)
+      } else {
+        // WhatsApp - placeholder
+        toast.error("El envío por WhatsApp aún no está disponible. Por favor usa Email.")
+        setOtpMethod("email")
+      }
     } catch (error: unknown) {
-      setError(error instanceof Error ? error.message : "Error al enviar código")
+      const errorMessage = error instanceof Error ? error.message : "Error al enviar código"
+      setError(errorMessage)
+      toast.error(errorMessage)
     } finally {
       setIsLoading(false)
     }
@@ -138,9 +158,38 @@ export default function LoginPage() {
               </TabsContent>
 
               <TabsContent value="otp">
-                {!otpSent ? (
-                  <form onSubmit={handleOTPRequest}>
-                    <div className="flex flex-col gap-4">
+                <form onSubmit={handleOTPRequest}>
+                  <div className="flex flex-col gap-4">
+                    <div className="grid gap-2">
+                      <Label>Método de envío</Label>
+                      <div className="flex gap-2">
+                        <Button
+                          type="button"
+                          variant={otpMethod === "email" ? "default" : "outline"}
+                          className="flex-1"
+                          onClick={() => setOtpMethod("email")}
+                        >
+                          <Mail className="mr-2 h-4 w-4" />
+                          Email
+                        </Button>
+                        <Button
+                          type="button"
+                          variant={otpMethod === "whatsapp" ? "default" : "outline"}
+                          className="flex-1"
+                          onClick={() => {
+                            setOtpMethod("whatsapp")
+                            toast.info("WhatsApp próximamente. Usando Email por ahora.")
+                            setOtpMethod("email")
+                          }}
+                          disabled
+                        >
+                          <MessageCircle className="mr-2 h-4 w-4" />
+                          WhatsApp
+                          <span className="ml-1 text-xs">(Próximamente)</span>
+                        </Button>
+                      </div>
+                    </div>
+                    {otpMethod === "email" ? (
                       <div className="grid gap-2">
                         <Label htmlFor="otp-email">Correo Electrónico</Label>
                         <Input
@@ -151,29 +200,42 @@ export default function LoginPage() {
                           value={otpEmail}
                           onChange={(e) => setOtpEmail(e.target.value)}
                         />
-                        <p className="text-xs text-muted-foreground">Te enviaremos un código de acceso único</p>
+                        <p className="text-xs text-muted-foreground">
+                          Te enviaremos un código de 6 dígitos por correo
+                        </p>
                       </div>
-                      {error && <div className="rounded-md bg-red-50 p-3 text-sm text-red-600">{error}</div>}
-                      <Button type="submit" className="w-full bg-green-600 hover:bg-green-700" disabled={isLoading}>
-                        <Mail className="mr-2 h-4 w-4" />
-                        {isLoading ? "Enviando..." : "Enviar Código OTP"}
-                      </Button>
-                    </div>
-                  </form>
-                ) : (
-                  <div className="space-y-4">
-                    <div className="rounded-md bg-green-50 p-4 text-center">
-                      <Mail className="mx-auto mb-2 h-8 w-8 text-green-600" />
-                      <p className="text-sm font-medium text-green-800">Código OTP Enviado</p>
-                      <p className="mt-2 text-xs text-green-700">
-                        Revisa tu correo <strong>{otpEmail}</strong> y haz clic en el enlace para iniciar sesión
-                      </p>
-                    </div>
-                    <Button variant="outline" className="w-full bg-transparent" onClick={() => setOtpSent(false)}>
-                      Intentar con otro correo
+                    ) : (
+                      <div className="grid gap-2">
+                        <Label htmlFor="otp-phone">Número de WhatsApp</Label>
+                        <Input
+                          id="otp-phone"
+                          type="tel"
+                          placeholder="+52 123 456 7890"
+                          value={otpPhone}
+                          onChange={(e) => setOtpPhone(e.target.value)}
+                          disabled
+                        />
+                        <p className="text-xs text-muted-foreground">
+                          El envío por WhatsApp estará disponible pronto
+                        </p>
+                      </div>
+                    )}
+                    {error && <div className="rounded-md bg-red-50 p-3 text-sm text-red-600">{error}</div>}
+                    <Button type="submit" className="w-full bg-green-600 hover:bg-green-700" disabled={isLoading}>
+                      {otpMethod === "email" ? (
+                        <>
+                          <Mail className="mr-2 h-4 w-4" />
+                          {isLoading ? "Enviando..." : "Enviar Código OTP"}
+                        </>
+                      ) : (
+                        <>
+                          <MessageCircle className="mr-2 h-4 w-4" />
+                          {isLoading ? "Enviando..." : "Enviar por WhatsApp"}
+                        </>
+                      )}
                     </Button>
                   </div>
-                )}
+                </form>
               </TabsContent>
             </Tabs>
 
