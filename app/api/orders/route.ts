@@ -94,12 +94,15 @@ export async function POST(req: Request) {
       paymentStatus: "pending",
       notes: notes || null,
       orderItems: {
-        create: cartItems.map((item) => ({
-          productId: item.productId,
-          quantity: item.quantity,
-          unitPrice: item.product.price,
-          subtotal: item.product.price * item.quantity,
-        })),
+        create: cartItems.map((item) => {
+          const price = Number(item.product.price)
+          return {
+            productId: item.productId,
+            quantity: item.quantity,
+            unitPrice: price,
+            subtotal: price * item.quantity,
+          }
+        }),
       },
     },
   })

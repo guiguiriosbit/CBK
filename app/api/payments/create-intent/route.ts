@@ -5,13 +5,11 @@ import { getServerSession } from "next-auth"
 import { authOptions } from "@/lib/auth/config"
 import { prisma } from "@/lib/db/prisma"
 
-if (!process.env.STRIPE_SECRET_KEY) {
-  throw new Error("STRIPE_SECRET_KEY no está configurada en las variables de entorno")
+function getStripe() {
+  const key = process.env.STRIPE_SECRET_KEY
+  if (!key) throw new Error("STRIPE_SECRET_KEY no está configurada")
+  return new Stripe(key, { apiVersion: "2025-12-15.clover" })
 }
-
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
-  apiVersion: "2025-12-15.clover",
-})
 
 export async function POST(request: NextRequest) {
   try {
@@ -30,6 +28,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Monto inválido" }, { status: 400 })
     }
 
+    const stripe = getStripe()
     const paymentIntent = await stripe.paymentIntents.create({
       amount: Math.round(amount * 100),
       currency,

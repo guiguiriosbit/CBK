@@ -9,3 +9,4 @@ scripts/
 
 .next/
 .env
+.env.local

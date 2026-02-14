@@ -12,7 +12,7 @@ import { toast } from "sonner"
 interface ProductCardProps {
   id: string
   name: string
-  description: string
+  description?: string | null
   price: number
   imageUrl: string
   stock: number
@@ -22,7 +22,7 @@ interface ProductCardProps {
   priority?: boolean
 }
 
-export function ProductCard({ id, name, description, price, imageUrl, stock, featured, isNew, priority }: ProductCardProps) {
+export function ProductCard({ id, name, description = "", price, imageUrl, stock, featured, isNew, priority }: ProductCardProps) {
   const [isAdding, setIsAdding] = useState(false)
   const router = useRouter()
 
