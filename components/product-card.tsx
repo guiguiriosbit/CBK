@@ -3,7 +3,7 @@
 import { Card, CardContent, CardFooter } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { ShoppingCart } from "lucide-react"
+import { ShoppingCart, Minus, Plus } from "lucide-react"
 import Image from "next/image"
 import { useState } from "react"
 import { useRouter } from "next/navigation"
@@ -24,23 +24,25 @@ interface ProductCardProps {
 
 export function ProductCard({ id, name, description = "", price, imageUrl, stock, featured, isNew, priority }: ProductCardProps) {
   const [isAdding, setIsAdding] = useState(false)
+  const [quantity, setQuantity] = useState(1)
   const router = useRouter()
+
+  const maxQty = Math.max(0, stock)
+  const qty = Math.min(Math.max(1, quantity), maxQty || 1)
 
   const handleCardClick = () => {
     router.push(`/productos/${id}`)
   }
 
   const addToCart = async (e: React.MouseEvent) => {
-    e.stopPropagation() // Evitar que el click se propague al card
+    e.stopPropagation()
     setIsAdding(true)
 
     try {
       const res = await fetch("/api/cart", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ productId: id }),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ productId: id, quantity: qty }),
       })
 
       if (res.status === 401) {
@@ -50,15 +52,14 @@ export function ProductCard({ id, name, description = "", price, imageUrl, stock
 
       if (!res.ok) {
         const data = await res.json().catch(() => null)
-        const message = data?.error || "Error al agregar al carrito"
-        throw new Error(message)
+        throw new Error(data?.error || "Error al agregar al carrito")
       }
 
-      toast.success("Producto agregado al carrito")
+      toast.success(qty > 1 ? `${qty} productos agregados` : "Producto agregado al carrito")
       window.dispatchEvent(new CustomEvent("cart-updated"))
       router.refresh()
     } catch (error) {
-      console.error("[v0] Error adding to cart:", error)
+      console.error("Error adding to cart:", error)
       toast.error("Error al agregar al carrito")
     } finally {
       setIsAdding(false)
@@ -95,20 +96,47 @@ export function ProductCard({ id, name, description = "", price, imageUrl, stock
           <h3 className="line-clamp-1 font-semibold text-sm text-foreground">{name}</h3>
           <p className="line-clamp-2 text-xs text-muted-foreground">{description}</p>
         </div>
-        <div className="flex w-full items-center justify-between">
-          <div className="flex flex-col">
-            <span className="text-lg font-bold text-primary">${price.toLocaleString("es-MX")}</span>
-            <span className="text-[10px] text-muted-foreground">{stock > 0 ? `${stock} disponibles` : "Agotado"}</span>
+        <div className="flex w-full flex-col gap-2">
+          <div className="flex items-center justify-between">
+            <div className="flex flex-col">
+              <span className="text-lg font-bold text-primary">${price.toLocaleString("es-MX")}</span>
+              <span className="text-[10px] text-muted-foreground">{stock > 0 ? `${stock} disponibles` : "Agotado"}</span>
+            </div>
           </div>
-          <Button
-            onClick={addToCart}
-            disabled={isAdding || stock === 0}
-            size="sm"
-            className="bg-primary hover:bg-primary/90 text-xs h-8 px-3"
-          >
-            <ShoppingCart className="mr-1 h-3 w-3" />
-            {isAdding ? "..." : "Agregar"}
-          </Button>
+          <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center rounded-md border border-input bg-background">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7 shrink-0 rounded-l-md rounded-r-none"
+                disabled={qty <= 1 || isAdding || stock === 0}
+                onClick={() => setQuantity((prev) => Math.max(1, prev - 1))}
+              >
+                <Minus className="h-3 w-3" />
+              </Button>
+              <span className="min-w-[24px] px-1 text-center text-xs font-medium">{qty}</span>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7 shrink-0 rounded-l-none rounded-r-md"
+                disabled={qty >= maxQty || isAdding || stock === 0}
+                onClick={() => setQuantity((prev) => Math.min(maxQty || 1, prev + 1))}
+              >
+                <Plus className="h-3 w-3" />
+              </Button>
+            </div>
+            <Button
+              onClick={addToCart}
+              disabled={isAdding || stock === 0}
+              size="sm"
+              className="flex-1 bg-primary hover:bg-primary/90 text-xs h-7 px-2"
+            >
+              <ShoppingCart className="mr-1 h-3 w-3" />
+              {isAdding ? "..." : "Agregar"}
+            </Button>
+          </div>
         </div>
       </CardFooter>
     </Card>

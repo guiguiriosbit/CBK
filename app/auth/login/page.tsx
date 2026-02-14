@@ -11,6 +11,7 @@ import { useState } from "react"
 import { Snowflake } from "lucide-react"
 import { toast } from "sonner"
 import { signIn } from "next-auth/react"
+import { getAuthErrorMessage } from "@/lib/auth/errors"
 
 export default function LoginPage() {
   const [email, setEmail] = useState("")
@@ -32,11 +33,9 @@ export default function LoginPage() {
       })
 
       if (result?.error) {
-        const errorMessage = result.error === "CredentialsSignin" 
-          ? "Correo o contraseña incorrectos" 
-          : result.error
+        const errorMessage = getAuthErrorMessage(result.error)
         setError(errorMessage)
-        toast.error(errorMessage)
+        toast.error(errorMessage, { duration: 6000 })
         return
       }
 
@@ -45,8 +44,10 @@ export default function LoginPage() {
         router.push("/")
         router.refresh()
       }
-    } catch (error: unknown) {
-      setError(error instanceof Error ? error.message : "Error al iniciar sesión")
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Error al iniciar sesión"
+      setError(message)
+      toast.error(message, { duration: 6000 })
     } finally {
       setIsLoading(false)
     }
@@ -96,7 +97,18 @@ export default function LoginPage() {
                     autoComplete="off"
                   />
                 </div>
-                {error && <div className="rounded-md bg-red-50 p-3 text-sm text-red-600">{error}</div>}
+                {error && (
+                  <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700" role="alert">
+                    <p className="font-medium">Error de acceso</p>
+                    <p className="mt-1">{error}</p>
+                    <Link
+                      href="/auth/registro"
+                      className="mt-2 inline-block text-sm font-medium text-red-800 underline underline-offset-2 hover:text-red-900"
+                    >
+                      Crear cuenta nueva →
+                    </Link>
+                  </div>
+                )}
                 <Button type="submit" className="w-full bg-red-600 hover:bg-red-700" disabled={isLoading}>
                   {isLoading ? "Iniciando..." : "Iniciar Sesión"}
                 </Button>

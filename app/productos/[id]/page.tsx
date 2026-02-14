@@ -133,6 +133,7 @@ export default async function ProductDetailPage({
               {/* Botón agregar al carrito */}
               <AddToCartButton
                 productId={product.id}
+                stock={product.stock}
                 disabled={product.stock === 0}
                 className="w-full"
                 size="lg"

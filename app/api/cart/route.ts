@@ -48,19 +48,22 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "No autenticado" }, { status: 401 })
   }
 
-  const { productId } = await req.json()
+  const { productId, quantity: qty } = await req.json()
   if (!productId) {
     return NextResponse.json({ error: "productId es obligatorio" }, { status: 400 })
   }
+
+  const quantityToAdd = Math.max(1, Math.min(999, Number(qty) || 1))
 
   const existing = await prisma.cartItem.findFirst({
     where: { userId, productId },
   })
 
   if (existing) {
+    const newQuantity = existing.quantity + quantityToAdd
     const updated = await prisma.cartItem.update({
       where: { id: existing.id },
-      data: { quantity: existing.quantity + 1 },
+      data: { quantity: newQuantity },
       include: { product: true },
     })
 
@@ -82,7 +85,7 @@ export async function POST(req: Request) {
     data: {
       userId,
       productId,
-      quantity: 1,
+      quantity: quantityToAdd,
     },
     include: { product: true },
   })
