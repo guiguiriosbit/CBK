@@ -1,7 +1,6 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { createClient } from "@/lib/supabase/client"
 import { Header } from "@/components/header"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -16,7 +15,10 @@ import { useRouter } from "next/navigation"
 import { toast } from "sonner"
 import { CheckoutWrapper } from "@/components/checkout/checkout-wrapper"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { COUNTRIES } from "@/lib/countries"
+import { COUNTRIES, getCountryCode } from "@/lib/countries"
+import { getStatesByCountryCode } from "@/lib/states"
+import { PHONE_CODES, getDialCodeByCountryCode } from "@/lib/phone-codes"
+import { getProductImageUrl } from "@/lib/product-images"
 
 interface CartItem {
   id: string
@@ -33,6 +35,10 @@ interface CartItem {
 
 interface ShippingAddress {
   id?: string
+  full_name?: string
+  email?: string
+  phone_country_code?: string
+  phone?: string
   address_line1: string
   address_line2: string
   city: string
@@ -48,16 +54,20 @@ export default function CheckoutPage() {
   const [orderComplete, setOrderComplete] = useState(false)
   const [orderId, setOrderId] = useState<string | null>(null)
   const [currentOrderId, setCurrentOrderId] = useState<string | null>(null)
-  const [paymentStep, setPaymentStep] = useState<'address' | 'payment'>('address')
+  const [paymentStep, setPaymentStep] = useState<"address" | "payment">("address")
   const router = useRouter()
 
   const [shippingAddress, setShippingAddress] = useState<ShippingAddress>({
+    full_name: "",
+    email: "",
+    phone_country_code: "+52",
+    phone: "",
     address_line1: "",
     address_line2: "",
     city: "",
     state: "",
     postal_code: "",
-    country: "",
+    country: "México",
   })
 
   const [notes, setNotes] = useState("")
@@ -67,61 +77,78 @@ export default function CheckoutPage() {
   }, [])
 
   const loadCheckoutData = async () => {
-    const supabase = createClient()
-    const {
-      data: { user },
-    } = await supabase.auth.getUser()
-
-    if (!user) {
-      router.push("/auth/login")
-      return
-    }
-
     setIsLoading(true)
+    try {
+      // Cargar items del carrito desde Prisma vía API
+      const cartRes = await fetch("/api/cart")
 
-    // Cargar items del carrito
-    const { data: cart, error: cartError } = await supabase
-      .from("cart_items")
-      .select("*, products(*)")
-      .eq("user_id", user.id)
+      if (cartRes.status === 401) {
+        router.push("/auth/login")
+        return
+      }
 
-    if (cartError) {
-      console.error("[v0] Error loading cart:", cartError)
-      toast.error("Error al cargar el carrito")
+      if (!cartRes.ok) {
+        const data = await cartRes.json().catch(() => null)
+        const message = data?.error || "Error al cargar el carrito"
+        throw new Error(message)
+      }
+
+      const cartData = await cartRes.json()
+      const items = cartData.items as CartItem[]
+
+      if (!items || items.length === 0) {
+        toast.error("Tu carrito está vacío")
+        router.push("/carrito")
+        return
+      }
+
+      setCartItems(items)
+
+      // Cargar dirección de envío por defecto si existe
+      const addrRes = await fetch("/api/shipping-address/default")
+
+      if (addrRes.status === 401) {
+        router.push("/auth/login")
+        return
+      }
+
+      if (addrRes.ok) {
+        const addrData = await addrRes.json()
+        if (addrData.address) {
+          setShippingAddress({
+            ...addrData.address,
+            full_name: addrData.address.full_name ?? "",
+            email: addrData.address.email ?? "",
+            phone_country_code: addrData.address.phone_country_code ?? "+52",
+            phone: addrData.address.phone ?? "",
+          } as ShippingAddress)
+        } else {
+          const profileRes = await fetch("/api/profile")
+          const profile = profileRes.ok ? await profileRes.json() : null
+          setShippingAddress((prev) => ({
+            ...prev,
+            full_name: profile?.name ?? prev.full_name ?? "",
+            email: profile?.email ?? prev.email ?? "",
+            phone: profile?.phone ?? prev.phone ?? "",
+            country: prev.country || "México",
+            phone_country_code: prev.phone_country_code || getDialCodeByCountryCode(getCountryCode(prev.country || "México")),
+          }))
+        }
+      } else {
+        // Si falla la carga de dirección, al menos establecer país por defecto
+        setShippingAddress((prev) => ({
+          ...prev,
+          country: prev.country || "México",
+          phone_country_code: prev.phone_country_code || getDialCodeByCountryCode(getCountryCode(prev.country || "México")),
+        }))
+      }
+    } catch (error) {
+      console.error("Error loading checkout data:", error)
+      toast.error("Error al cargar los datos de checkout")
       router.push("/carrito")
-      return
+    } finally {
+      setIsLoading(false)
     }
-
-    if (!cart || cart.length === 0) {
-      toast.error("Tu carrito está vacío")
-      router.push("/carrito")
-      return
-    }
-
-    setCartItems(cart as CartItem[])
-
-    // Cargar dirección por defecto si existe
-    const { data: addresses } = await supabase
-      .from("shipping_addresses")
-      .select("*")
-      .eq("user_id", user.id)
-      .eq("is_default", true)
-      .single()
-
-    if (addresses) {
-      setShippingAddress({
-        ...addresses,
-        country: addresses.country || ""
-      })
-    } else {
-      // Si no hay dirección por defecto, establecer México como predeterminado
-      setShippingAddress(prev => ({
-        ...prev,
-        country: prev.country || "México"
-      }))
-    }
-
-    setIsLoading(false)
   }
 
   const calculateSubtotal = () => {
@@ -137,6 +164,7 @@ export default function CheckoutPage() {
   }
 
   const handleContinueToPayment = async () => {
+    const isNewAddress = !shippingAddress.id
     if (
       !shippingAddress.address_line1 ||
       !shippingAddress.city ||
@@ -147,84 +175,42 @@ export default function CheckoutPage() {
       toast.error("Por favor completa todos los campos de dirección")
       return
     }
-
-    setIsProcessing(true)
-    const supabase = createClient()
-    const {
-      data: { user },
-    } = await supabase.auth.getUser()
-
-    if (!user) {
-      router.push("/auth/login")
+    if (isNewAddress && (!shippingAddress.full_name || !shippingAddress.email || !shippingAddress.phone)) {
+      toast.error("Por favor completa nombre, email y celular")
       return
     }
 
+    setIsProcessing(true)
+
     try {
-      // Guardar dirección de envío
-      let shippingAddressId = shippingAddress.id
+      const res = await fetch("/api/orders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          shippingAddress,
+          notes,
+        }),
+      })
 
-      if (!shippingAddressId) {
-        const { data: newAddress, error: addressError } = await supabase
-          .from("shipping_addresses")
-          .insert({
-            user_id: user.id,
-            ...shippingAddress,
-            is_default: true,
-          })
-          .select()
-          .single()
-
-        if (addressError) throw addressError
-        shippingAddressId = newAddress.id
+      if (res.status === 401) {
+        router.push("/auth/login")
+        return
       }
 
-      // Crear pedido
-      const { data: order, error: orderError } = await supabase
-        .from("orders")
-        .insert({
-          user_id: user.id,
-          shipping_address_id: shippingAddressId,
-          total_amount: calculateTotal(),
-          status: "pending",
-          payment_status: "pending",
-          notes: notes || null,
-        })
-        .select()
-        .single()
+      const data = await res.json()
 
-      if (orderError) throw orderError
+      if (!res.ok) {
+        const message = data?.error || "Error al procesar el pedido"
+        throw new Error(message)
+      }
 
-      // Crear items del pedido
-      const orderItems = cartItems.map((item) => ({
-        order_id: order.id,
-        product_id: item.product_id,
-        quantity: item.quantity,
-        unit_price: item.products.price,
-        subtotal: item.products.price * item.quantity,
-      }))
-
-      const { error: itemsError } = await supabase.from("order_items").insert(orderItems)
-
-      if (itemsError) throw itemsError
-
-      setCurrentOrderId(order.id)
-      setPaymentStep('payment')
+      setCurrentOrderId(data.orderId)
+      setPaymentStep("payment")
       toast.success("Dirección guardada. Procede con el pago")
     } catch (error: any) {
       console.error("[v0] Error creating order:", error)
       const errorMessage = error?.message || error?.error || "Error al procesar el pedido"
       toast.error(errorMessage)
-      
-      // Mostrar detalles del error en desarrollo
-      if (process.env.NODE_ENV === 'development') {
-        console.error("Detalles del error:", {
-          error,
-          message: error?.message,
-          details: error?.details,
-          hint: error?.hint,
-          code: error?.code
-        })
-      }
     } finally {
       setIsProcessing(false)
     }
@@ -234,66 +220,27 @@ export default function CheckoutPage() {
     if (!currentOrderId) return
 
     setIsProcessing(true)
-    const supabase = createClient()
-    const {
-      data: { user },
-    } = await supabase.auth.getUser()
-
-    if (!user) {
-      router.push("/auth/login")
-      return
-    }
 
     try {
-      // Actualizar transacción en la base de datos
-      const { error: transactionError } = await supabase
-        .from("transactions")
-        .update({
-          status: "succeeded",
-          completed_at: new Date().toISOString(),
-        })
-        .eq("stripe_payment_intent_id", paymentIntentId)
-        .eq("user_id", user.id)
+      const res = await fetch("/api/orders/complete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          orderId: currentOrderId,
+          paymentIntentId,
+        }),
+      })
 
-      if (transactionError) {
-        console.error("Error actualizando transacción:", transactionError)
+      if (res.status === 401) {
+        router.push("/auth/login")
+        return
       }
 
-      // Actualizar pedido a pagado
-      const { error: orderError } = await supabase
-        .from("orders")
-        .update({
-          payment_status: "paid",
-          status: "processing",
-        })
-        .eq("id", currentOrderId)
+      const data = await res.json().catch(() => null)
 
-      if (orderError) throw orderError
-
-      // Actualizar stock de productos
-      for (const item of cartItems) {
-        const { error: stockError } = await supabase.rpc("decrement_product_stock", {
-          product_id: item.product_id,
-          quantity: item.quantity,
-        })
-        // Si no existe la función, actualizar manualmente
-        if (stockError) {
-          const { error: updateError } = await supabase
-            .from("products")
-            .update({ stock: item.products.stock - item.quantity })
-            .eq("id", item.product_id)
-          
-          if (updateError) {
-            console.error(`Error actualizando stock del producto ${item.product_id}:`, updateError)
-          }
-        }
-      }
-
-      // Limpiar carrito
-      const { error: cartError } = await supabase.from("cart_items").delete().eq("user_id", user.id)
-      
-      if (cartError) {
-        console.error("Error limpiando carrito:", cartError)
+      if (!res.ok) {
+        const message = data?.error || "Error al completar el pedido"
+        throw new Error(message)
       }
 
       setOrderId(currentOrderId)
@@ -389,12 +336,146 @@ export default function CheckoutPage() {
                 <CardContent className="space-y-4">
                   <div className="grid gap-4">
                     <div className="grid gap-2">
+                      <Label htmlFor="full_name">Nombre completo *</Label>
+                      <Input
+                        id="full_name"
+                        placeholder="Nombre y apellidos"
+                        value={shippingAddress.full_name ?? ""}
+                        onChange={(e) => setShippingAddress({ ...shippingAddress, full_name: e.target.value.toUpperCase() })}
+                        required
+                      />
+                    </div>
+                    <div className="grid gap-2">
+                      <Label htmlFor="email">Email *</Label>
+                      <Input
+                        id="email"
+                        type="email"
+                        placeholder="correo@ejemplo.com"
+                        value={shippingAddress.email ?? ""}
+                        onChange={(e) => setShippingAddress({ ...shippingAddress, email: e.target.value })}
+                        required
+                      />
+                    </div>
+                    <div className="grid gap-2">
+                      <Label htmlFor="phone">Celular *</Label>
+                      <div className="flex gap-2">
+                        <Select
+                          value={shippingAddress.phone_country_code ?? "+52"}
+                          onValueChange={(value) => setShippingAddress({ ...shippingAddress, phone_country_code: value })}
+                        >
+                          <SelectTrigger className="w-[120px]">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {PHONE_CODES.map((p) => (
+                              <SelectItem key={p.code} value={p.dialCode}>
+                                {p.dialCode} {p.name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <Input
+                          id="phone"
+                          type="tel"
+                          placeholder="55 1234 5678"
+                          value={shippingAddress.phone ?? ""}
+                          onChange={(e) => setShippingAddress({ ...shippingAddress, phone: e.target.value })}
+                          required
+                          className="flex-1"
+                        />
+                      </div>
+                    </div>
+                    <div className="grid gap-2">
+                      <Label htmlFor="country">País *</Label>
+                      <Select
+                        value={shippingAddress.country}
+                        onValueChange={(value) => {
+                          const states = getStatesByCountryCode(getCountryCode(value))
+                          const currentStateValid = states.length > 0
+                            ? states.some((s) => s.name === shippingAddress.state)
+                            : true
+                          setShippingAddress({
+                            ...shippingAddress,
+                            country: value,
+                            state: currentStateValid ? shippingAddress.state : "",
+                            phone_country_code: getDialCodeByCountryCode(getCountryCode(value)),
+                          })
+                        }}
+                      >
+                        <SelectTrigger id="country">
+                          <SelectValue placeholder="Selecciona un país" />
+                        </SelectTrigger>
+                        <SelectContent className="max-h-[300px]">
+                          {COUNTRIES.map((country) => (
+                            <SelectItem key={country.code} value={country.name}>
+                              {country.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="grid gap-2">
+                      <Label htmlFor="state">Estado / Provincia *</Label>
+                      {(() => {
+                        const countryCode = getCountryCode(shippingAddress.country)
+                        const states = getStatesByCountryCode(countryCode)
+                        if (states.length > 0) {
+                          return (
+                            <Select
+                              value={shippingAddress.state}
+                              onValueChange={(value) => setShippingAddress({ ...shippingAddress, state: value })}
+                            >
+                              <SelectTrigger id="state">
+                                <SelectValue placeholder="Selecciona estado o provincia" />
+                              </SelectTrigger>
+                              <SelectContent className="max-h-[250px]">
+                                {states.map((s) => (
+                                  <SelectItem key={s.code} value={s.name}>
+                                    {s.name}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          )
+                        }
+                        return (
+                          <Input
+                            id="state"
+                            placeholder="Estado, provincia o región"
+                            value={shippingAddress.state}
+                            onChange={(e) => setShippingAddress({ ...shippingAddress, state: e.target.value.toUpperCase() })}
+                            required
+                          />
+                        )
+                      })()}
+                    </div>
+                    <div className="grid gap-2">
+                      <Label htmlFor="city">Ciudad *</Label>
+                      <Input
+                        id="city"
+                        placeholder="Ciudad"
+                        value={shippingAddress.city}
+                        onChange={(e) => setShippingAddress({ ...shippingAddress, city: e.target.value.toUpperCase() })}
+                        required
+                      />
+                    </div>
+                    <div className="grid gap-2">
+                      <Label htmlFor="postal">Código Postal *</Label>
+                      <Input
+                        id="postal"
+                        placeholder="12345"
+                        value={shippingAddress.postal_code}
+                        onChange={(e) => setShippingAddress({ ...shippingAddress, postal_code: e.target.value.toUpperCase() })}
+                        required
+                      />
+                    </div>
+                    <div className="grid gap-2">
                       <Label htmlFor="address1">Dirección *</Label>
                       <Input
                         id="address1"
                         placeholder="Calle y número"
                         value={shippingAddress.address_line1}
-                        onChange={(e) => setShippingAddress({ ...shippingAddress, address_line1: e.target.value })}
+                        onChange={(e) => setShippingAddress({ ...shippingAddress, address_line1: e.target.value.toUpperCase() })}
                         required
                       />
                     </div>
@@ -404,60 +485,8 @@ export default function CheckoutPage() {
                         id="address2"
                         placeholder="Colonia, departamento, etc."
                         value={shippingAddress.address_line2}
-                        onChange={(e) => setShippingAddress({ ...shippingAddress, address_line2: e.target.value })}
+                        onChange={(e) => setShippingAddress({ ...shippingAddress, address_line2: e.target.value.toUpperCase() })}
                       />
-                    </div>
-                    <div className="grid gap-4 md:grid-cols-2">
-                      <div className="grid gap-2">
-                        <Label htmlFor="city">Ciudad *</Label>
-                        <Input
-                          id="city"
-                          placeholder="Ciudad"
-                          value={shippingAddress.city}
-                          onChange={(e) => setShippingAddress({ ...shippingAddress, city: e.target.value })}
-                          required
-                        />
-                      </div>
-                      <div className="grid gap-2">
-                        <Label htmlFor="state">Estado *</Label>
-                        <Input
-                          id="state"
-                          placeholder="Estado"
-                          value={shippingAddress.state}
-                          onChange={(e) => setShippingAddress({ ...shippingAddress, state: e.target.value })}
-                          required
-                        />
-                      </div>
-                    </div>
-                    <div className="grid gap-4 md:grid-cols-2">
-                      <div className="grid gap-2">
-                        <Label htmlFor="postal">Código Postal *</Label>
-                        <Input
-                          id="postal"
-                          placeholder="12345"
-                          value={shippingAddress.postal_code}
-                          onChange={(e) => setShippingAddress({ ...shippingAddress, postal_code: e.target.value })}
-                          required
-                        />
-                      </div>
-                      <div className="grid gap-2">
-                        <Label htmlFor="country">País *</Label>
-                        <Select
-                          value={shippingAddress.country}
-                          onValueChange={(value) => setShippingAddress({ ...shippingAddress, country: value })}
-                        >
-                          <SelectTrigger id="country">
-                            <SelectValue placeholder="Selecciona un país" />
-                          </SelectTrigger>
-                          <SelectContent className="max-h-[300px]">
-                            {COUNTRIES.map((country) => (
-                              <SelectItem key={country.code} value={country.name}>
-                                {country.name}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
                     </div>
                   </div>
                 </CardContent>
@@ -534,7 +563,7 @@ export default function CheckoutPage() {
                     <div key={item.id} className="flex gap-3">
                       <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-md bg-muted">
                         <Image
-                          src={item.products.image_url || "/placeholder.svg"}
+                          src={getProductImageUrl(item.products.image_url, item.products.name)}
                           alt={item.products.name}
                           fill
                           className="object-cover"

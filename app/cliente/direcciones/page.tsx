@@ -1,9 +1,7 @@
 "use client"
 
 import type React from "react"
-
 import { useEffect, useState } from "react"
-import { createClient } from "@/lib/supabase/client"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -22,10 +20,16 @@ import { toast } from "sonner"
 import { ArrowLeft, MapPin, Plus, Trash2, Star } from "lucide-react"
 import Link from "next/link"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { COUNTRIES } from "@/lib/countries"
+import { COUNTRIES, getCountryCode } from "@/lib/countries"
+import { getStatesByCountryCode } from "@/lib/states"
+import { PHONE_CODES, getDialCodeByCountryCode } from "@/lib/phone-codes"
 
 interface Address {
   id: string
+  full_name?: string | null
+  email?: string | null
+  phone_country_code?: string | null
+  phone?: string | null
   address_line1: string
   address_line2: string | null
   city: string
@@ -43,12 +47,16 @@ export default function DireccionesPage() {
   const router = useRouter()
 
   const [newAddress, setNewAddress] = useState({
+    full_name: "",
+    email: "",
+    phone_country_code: "+52",
+    phone: "",
     address_line1: "",
     address_line2: "",
     city: "",
     state: "",
     postal_code: "",
-    country: "",
+    country: "México",
   })
 
   useEffect(() => {
@@ -56,64 +64,61 @@ export default function DireccionesPage() {
   }, [])
 
   const loadAddresses = async () => {
-    const supabase = createClient()
-    const {
-      data: { user },
-    } = await supabase.auth.getUser()
-
-    if (!user) {
+    setIsLoading(true)
+    const res = await fetch("/api/shipping-address")
+    if (res.status === 401) {
       router.push("/auth/login")
       return
     }
-
-    setIsLoading(true)
-    const { data, error } = await supabase
-      .from("shipping_addresses")
-      .select("*")
-      .eq("user_id", user.id)
-      .order("is_default", { ascending: false })
-      .order("created_at", { ascending: false })
-
-    if (error) {
-      console.error("[v0] Error loading addresses:", error)
+    if (!res.ok) {
       toast.error("Error al cargar las direcciones")
-    } else {
-      setAddresses(data)
+      setIsLoading(false)
+      return
     }
+    const data = await res.json()
+    setAddresses(data.addresses ?? [])
     setIsLoading(false)
   }
 
   const handleAddAddress = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!newAddress.address_line1 || !newAddress.city || !newAddress.state || !newAddress.postal_code || !newAddress.country) {
+    if (
+      !newAddress.full_name ||
+      !newAddress.email ||
+      !newAddress.phone ||
+      !newAddress.address_line1 ||
+      !newAddress.city ||
+      !newAddress.state ||
+      !newAddress.postal_code ||
+      !newAddress.country
+    ) {
       toast.error("Por favor completa todos los campos requeridos")
       return
     }
 
     setIsSaving(true)
-    const supabase = createClient()
-    const {
-      data: { user },
-    } = await supabase.auth.getUser()
+    const res = await fetch("/api/shipping-address", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(newAddress),
+    })
 
-    if (!user) {
+    if (res.status === 401) {
       router.push("/auth/login")
       return
     }
 
-    const { error } = await supabase.from("shipping_addresses").insert({
-      user_id: user.id,
-      ...newAddress,
-      is_default: addresses.length === 0, // Primera dirección es por defecto
-    })
-
-    if (error) {
-      console.error("[v0] Error adding address:", error)
-      toast.error("Error al agregar la dirección")
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}))
+      toast.error(err.error || "Error al agregar la dirección")
     } else {
       toast.success("Dirección agregada exitosamente")
       setIsDialogOpen(false)
       setNewAddress({
+        full_name: "",
+        email: "",
+        phone_country_code: "+52",
+        phone: "",
         address_line1: "",
         address_line2: "",
         city: "",
@@ -127,21 +132,16 @@ export default function DireccionesPage() {
   }
 
   const setAsDefault = async (addressId: string) => {
-    const supabase = createClient()
-    const {
-      data: { user },
-    } = await supabase.auth.getUser()
-
-    if (!user) return
-
-    // Quitar default de todas
-    await supabase.from("shipping_addresses").update({ is_default: false }).eq("user_id", user.id)
-
-    // Establecer la nueva por defecto
-    const { error } = await supabase.from("shipping_addresses").update({ is_default: true }).eq("id", addressId)
-
-    if (error) {
-      console.error("[v0] Error setting default:", error)
+    const res = await fetch("/api/shipping-address/default", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ addressId }),
+    })
+    if (res.status === 401) {
+      router.push("/auth/login")
+      return
+    }
+    if (!res.ok) {
       toast.error("Error al establecer dirección por defecto")
     } else {
       toast.success("Dirección establecida como predeterminada")
@@ -150,12 +150,16 @@ export default function DireccionesPage() {
   }
 
   const deleteAddress = async (addressId: string) => {
-    const supabase = createClient()
-
-    const { error } = await supabase.from("shipping_addresses").delete().eq("id", addressId)
-
-    if (error) {
-      console.error("[v0] Error deleting address:", error)
+    const res = await fetch("/api/shipping-address", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ addressId }),
+    })
+    if (res.status === 401) {
+      router.push("/auth/login")
+      return
+    }
+    if (!res.ok) {
       toast.error("Error al eliminar la dirección")
     } else {
       toast.success("Dirección eliminada")
@@ -196,19 +200,150 @@ export default function DireccionesPage() {
               Agregar Dirección
             </Button>
           </DialogTrigger>
-          <DialogContent className="max-w-2xl">
+          <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Nueva Dirección</DialogTitle>
               <DialogDescription>Agrega una nueva dirección de envío</DialogDescription>
             </DialogHeader>
             <form onSubmit={handleAddAddress} className="space-y-4">
               <div className="grid gap-2">
+                <Label htmlFor="full_name">Nombre completo *</Label>
+                <Input
+                  id="full_name"
+                  placeholder="Nombre y apellidos"
+                  value={newAddress.full_name}
+                  onChange={(e) => setNewAddress({ ...newAddress, full_name: e.target.value.toUpperCase() })}
+                  required
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="email">Email *</Label>
+                <Input
+                  id="email"
+                  type="email"
+                  placeholder="correo@ejemplo.com"
+                  value={newAddress.email}
+                  onChange={(e) => setNewAddress({ ...newAddress, email: e.target.value })}
+                  required
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="phone">Celular *</Label>
+                <div className="flex gap-2">
+                  <Select
+                    value={newAddress.phone_country_code}
+                    onValueChange={(value) => setNewAddress({ ...newAddress, phone_country_code: value })}
+                  >
+                    <SelectTrigger className="w-[120px]">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {PHONE_CODES.map((p) => (
+                        <SelectItem key={p.code} value={p.dialCode}>
+                          {p.dialCode} {p.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Input
+                    id="phone"
+                    type="tel"
+                    placeholder="55 1234 5678"
+                    value={newAddress.phone}
+                    onChange={(e) => setNewAddress({ ...newAddress, phone: e.target.value })}
+                    required
+                    className="flex-1"
+                  />
+                </div>
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="country">País *</Label>
+                <Select
+                  value={newAddress.country}
+                  onValueChange={(value) => {
+                    const states = getStatesByCountryCode(getCountryCode(value))
+                    const currentValid = states.length > 0 ? states.some((s) => s.name === newAddress.state) : true
+                    setNewAddress({
+                      ...newAddress,
+                      country: value,
+                      state: currentValid ? newAddress.state : "",
+                      phone_country_code: getDialCodeByCountryCode(getCountryCode(value)),
+                    })
+                  }}
+                >
+                  <SelectTrigger id="country">
+                    <SelectValue placeholder="Selecciona un país" />
+                  </SelectTrigger>
+                  <SelectContent className="max-h-[300px]">
+                    {COUNTRIES.map((country) => (
+                      <SelectItem key={country.code} value={country.name}>
+                        {country.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="state">Estado / Provincia *</Label>
+                {(() => {
+                  const states = getStatesByCountryCode(getCountryCode(newAddress.country))
+                  if (states.length > 0) {
+                    return (
+                      <Select
+                        value={newAddress.state}
+                        onValueChange={(value) => setNewAddress({ ...newAddress, state: value })}
+                      >
+                        <SelectTrigger id="state">
+                          <SelectValue placeholder="Selecciona estado o provincia" />
+                        </SelectTrigger>
+                        <SelectContent className="max-h-[250px]">
+                          {states.map((s) => (
+                            <SelectItem key={s.code} value={s.name}>
+                              {s.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    )
+                  }
+                  return (
+                    <Input
+                      id="state"
+                      placeholder="Estado, provincia o región"
+                      value={newAddress.state}
+                      onChange={(e) => setNewAddress({ ...newAddress, state: e.target.value.toUpperCase() })}
+                      required
+                    />
+                  )
+                })()}
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="city">Ciudad *</Label>
+                <Input
+                  id="city"
+                  placeholder="Ciudad"
+                  value={newAddress.city}
+                  onChange={(e) => setNewAddress({ ...newAddress, city: e.target.value.toUpperCase() })}
+                  required
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="postal">Código Postal *</Label>
+                <Input
+                  id="postal"
+                  placeholder="12345"
+                  value={newAddress.postal_code}
+                  onChange={(e) => setNewAddress({ ...newAddress, postal_code: e.target.value.toUpperCase() })}
+                  required
+                />
+              </div>
+              <div className="grid gap-2">
                 <Label htmlFor="address1">Dirección *</Label>
                 <Input
                   id="address1"
                   placeholder="Calle y número"
                   value={newAddress.address_line1}
-                  onChange={(e) => setNewAddress({ ...newAddress, address_line1: e.target.value })}
+                  onChange={(e) => setNewAddress({ ...newAddress, address_line1: e.target.value.toUpperCase() })}
                   required
                 />
               </div>
@@ -218,60 +353,8 @@ export default function DireccionesPage() {
                   id="address2"
                   placeholder="Colonia, departamento, etc."
                   value={newAddress.address_line2}
-                  onChange={(e) => setNewAddress({ ...newAddress, address_line2: e.target.value })}
+                  onChange={(e) => setNewAddress({ ...newAddress, address_line2: e.target.value.toUpperCase() })}
                 />
-              </div>
-              <div className="grid gap-4 md:grid-cols-2">
-                <div className="grid gap-2">
-                  <Label htmlFor="city">Ciudad *</Label>
-                  <Input
-                    id="city"
-                    placeholder="Ciudad"
-                    value={newAddress.city}
-                    onChange={(e) => setNewAddress({ ...newAddress, city: e.target.value })}
-                    required
-                  />
-                </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="state">Estado *</Label>
-                  <Input
-                    id="state"
-                    placeholder="Estado"
-                    value={newAddress.state}
-                    onChange={(e) => setNewAddress({ ...newAddress, state: e.target.value })}
-                    required
-                  />
-                </div>
-              </div>
-              <div className="grid gap-4 md:grid-cols-2">
-                <div className="grid gap-2">
-                  <Label htmlFor="postal">Código Postal *</Label>
-                  <Input
-                    id="postal"
-                    placeholder="12345"
-                    value={newAddress.postal_code}
-                    onChange={(e) => setNewAddress({ ...newAddress, postal_code: e.target.value })}
-                    required
-                  />
-                </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="country">País *</Label>
-                  <Select
-                    value={newAddress.country}
-                    onValueChange={(value) => setNewAddress({ ...newAddress, country: value })}
-                  >
-                    <SelectTrigger id="country">
-                      <SelectValue placeholder="Selecciona un país" />
-                    </SelectTrigger>
-                    <SelectContent className="max-h-[300px]">
-                      {COUNTRIES.map((country) => (
-                        <SelectItem key={country.code} value={country.name}>
-                          {country.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
               </div>
               <Button type="submit" className="w-full bg-primary hover:bg-primary/90" disabled={isSaving}>
                 {isSaving ? "Guardando..." : "Guardar Dirección"}
@@ -303,6 +386,13 @@ export default function DireccionesPage() {
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="space-y-1 text-sm">
+                  {address.full_name && <p className="font-medium">{address.full_name}</p>}
+                  {address.email && <p className="text-muted-foreground">{address.email}</p>}
+                  {(address.phone_country_code || address.phone) && (
+                    <p className="text-muted-foreground">
+                      {[address.phone_country_code, address.phone].filter(Boolean).join(" ")}
+                    </p>
+                  )}
                   <p className="font-medium">{address.address_line1}</p>
                   {address.address_line2 && <p className="text-muted-foreground">{address.address_line2}</p>}
                   <p className="text-muted-foreground">

@@ -1,0 +1,7 @@
+[build]
+  command = "npx prisma generate && npm run build"
+  NODE_VERSION = "20"
+
+# Next.js en Netlify: el plugin gestiona el despliegue automáticamente
+[[plugins]]
+  package = "@netlify/plugin-nextjs"

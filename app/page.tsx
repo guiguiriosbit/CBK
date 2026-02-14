@@ -1,12 +1,18 @@
-import { createClient } from "@/lib/supabase/server"
+import { prisma } from "@/lib/db/prisma"
 import { Header } from "@/components/header"
+import { Footer } from "@/components/footer"
 import { ProductCard } from "@/components/product-card"
-import { CategoryCard } from "@/components/category-card"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Snowflake, Gift, Truck, Shield, Search, LayoutDashboard } from "lucide-react"
+import { getProductImageUrl } from "@/lib/product-images"
+import { Snowflake, Gift, Truck, Shield, LayoutDashboard } from "lucide-react"
 import Link from "next/link"
+import { getServerSession } from "next-auth"
+import { authOptions } from "@/lib/auth/config"
+import { HomeCategorySelect } from "@/components/home-category-select"
+
+// Evitar caché: al marcar un producto como destacado en admin, debe verse al instante en inicio
+export const dynamic = "force-dynamic"
+export const revalidate = 0
 
 export default async function HomePage({
   searchParams,
@@ -14,190 +20,52 @@ export default async function HomePage({
   searchParams: Promise<{ categoria?: string; buscar?: string }>
 }) {
   const params = await searchParams
-  const supabase = await createClient()
+  const session = await getServerSession(authOptions)
+  const role = (session?.user as any)?.role ?? "cliente"
+  const isAdmin = role === "admin"
 
-  // 1. Lógica de verificación de Rol (Admin)
-  const { data: { user } } = await supabase.auth.getUser()
-  let isAdmin = false
-
-  if (user) {
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select("role")
-      .eq("id", user.id)
-      .single()
-    
-    isAdmin = profile?.role === "admin"
-  }
-
-  // Obtener categorías
-  const { data: categories, error: categoriesError } = await supabase
-    .from("categories")
-    .select("*")
-    .order("name")
-
-  // Obtener productos
-  let query = supabase.from("products").select("*, categories(name)").eq("is_active", true)
+  // Filtros para productos (categoría + búsqueda) usando Prisma
+  const where: any = { isActive: true }
 
   if (params.categoria) {
-    const { data: category } = await supabase.from("categories").select("id").eq("name", params.categoria).single()
-    if (category) {
-      query = query.eq("category_id", category.id)
-    }
+    // Filtrar por nombre de categoría
+    where.category = { name: params.categoria }
   }
 
   if (params.buscar) {
-    query = query.ilike("name", `%${params.buscar}%`)
+    where.name = { contains: params.buscar, mode: "insensitive" }
   }
 
-  const { data: products, error: productsError } = await query
-    .order("featured", { ascending: false })
-    .order("created_at", { ascending: false })
+  const [categoriesRaw, productsRaw] = await Promise.all([
+    prisma.category.findMany({
+      orderBy: { name: "asc" },
+    }),
+    prisma.product.findMany({
+      where,
+      include: {
+        category: { select: { name: true } },
+      },
+      orderBy: [{ featured: "desc" }, { createdAt: "desc" }],
+    }),
+  ])
 
-  // Error de Conexión - solo mostrar si es un error crítico de conexión
-  // Si hay errores menores o las tablas están vacías, continuar normalmente
-  const hasError = categoriesError || productsError
-  const errorMessage = categoriesError?.message || productsError?.message || ''
-  const errorCode = categoriesError?.code || productsError?.code || ''
-  const errorDetails = categoriesError?.details || productsError?.details || ''
-  
-  // Detectar diferentes tipos de errores
-  const isDomainNotFound = errorDetails.includes('ENOTFOUND') || errorMessage.includes('ENOTFOUND')
-  const isServerDown = errorMessage.includes('521') || errorMessage.includes('Web server is down') || errorMessage.includes('Error code 521')
-  const isCloudflareError = errorMessage.includes('Cloudflare') && (errorMessage.includes('521') || errorMessage.includes('Web server is down'))
-  
-  // Solo mostrar error si es un problema crítico de conexión o tabla no encontrada
-  const isCriticalError = hasError && (
-    errorCode === 'PGRST116' || // Tabla no encontrada
-    isDomainNotFound || // Dominio de Supabase no existe
-    isServerDown || // Servidor caído (error 521)
-    isCloudflareError || // Error de Cloudflare
-    errorMessage.toLowerCase().includes('connection') ||
-    errorMessage.toLowerCase().includes('timeout') ||
-    errorMessage.toLowerCase().includes('network') ||
-    errorMessage.toLowerCase().includes('fetch failed') ||
-    errorMessage.toLowerCase().includes('failed to fetch')
-  )
-  
-  if (isCriticalError) {
-    return (
-      <div className="min-h-screen bg-background">
-        <Header />
-        <div className="flex items-center justify-center min-h-[calc(100vh-4rem)] px-4">
-          <div className="text-center space-y-6">
-            <div className="flex justify-center">
-              <div className="relative flex items-center justify-center">
-                {/* Cuadrado exterior rotado con borde rojo */}
-                <div className="absolute h-32 w-32 rounded-lg border-[3px] border-red-600 rotate-45"></div>
-                {/* Escudo interior con borde rojo */}
-                <Shield className="h-24 w-24 text-red-600 relative z-10" strokeWidth={2.5} fill="none" />
-              </div>
-            </div>
-            <h2 className="text-3xl md:text-4xl font-bold text-foreground">
-              {isServerDown || isCloudflareError 
-                ? 'Servidor de Supabase No Disponible' 
-                : isDomainNotFound 
-                ? 'Proyecto de Supabase No Encontrado' 
-                : 'Error de Conexión Temporal'}
-            </h2>
-            <p className="text-muted-foreground max-w-md mx-auto">
-              {isServerDown || isCloudflareError ? (
-                <>
-                  El proyecto de Supabase está <strong>pausado, eliminado o el servidor está caído</strong> (Error 521). 
-                  Necesitas reactivarlo o crear un nuevo proyecto en{' '}
-                  <a href="https://supabase.com/dashboard" target="_blank" rel="noopener noreferrer" className="text-primary underline">
-                    supabase.com/dashboard
-                  </a>
-                </>
-              ) : isDomainNotFound ? (
-                <>
-                  El proyecto de Supabase configurado no existe o fue eliminado. 
-                  Necesitas crear un nuevo proyecto o actualizar la URL en tu archivo <code className="bg-muted px-1 rounded">.env.local</code>
-                </>
-              ) : (
-                'No se pudo conectar con la base de datos. Por favor, verifica tu conexión a internet e intenta nuevamente.'
-              )}
-            </p>
-            {process.env.NODE_ENV === 'development' && (
-              <div className="mt-4 p-4 bg-muted rounded-lg text-left max-w-md mx-auto text-sm space-y-2">
-                <p className="font-semibold mb-2">Detalles del error (solo desarrollo):</p>
-                {categoriesError && (
-                  <div>
-                    <p className="font-medium text-destructive">Error en Categorías:</p>
-                    <p className="text-xs text-muted-foreground">Código: {categoriesError.code || 'N/A'}</p>
-                    <p className="text-xs text-muted-foreground">Mensaje: {categoriesError.message || 'Sin mensaje'}</p>
-                    <p className="text-xs text-muted-foreground">Detalles: {JSON.stringify(categoriesError, null, 2)}</p>
-                  </div>
-                )}
-                {productsError && (
-                  <div>
-                    <p className="font-medium text-destructive">Error en Productos:</p>
-                    <p className="text-xs text-muted-foreground">Código: {productsError.code || 'N/A'}</p>
-                    <p className="text-xs text-muted-foreground">Mensaje: {productsError.message || 'Sin mensaje'}</p>
-                    <p className="text-xs text-muted-foreground">Detalles: {JSON.stringify(productsError, null, 2)}</p>
-                  </div>
-                )}
-                <div className="mt-4 p-2 bg-yellow-50 border border-yellow-200 rounded">
-                  <p className="text-xs font-medium text-yellow-800">
-                    {(isServerDown || isCloudflareError || isDomainNotFound) ? 'Pasos para solucionar:' : 'Sugerencias:'}
-                  </p>
-                  {(isServerDown || isCloudflareError) ? (
-                    <ol className="text-xs text-yellow-700 mt-1 list-decimal list-inside space-y-2">
-                      <li>Ve a <a href="https://supabase.com/dashboard" target="_blank" rel="noopener noreferrer" className="underline font-medium">https://supabase.com/dashboard</a> e inicia sesión</li>
-                      <li>Busca tu proyecto <code className="bg-yellow-100 px-1 rounded">iklscqudhhjvrlttqbrx</code> en la lista</li>
-                      <li>Si está <strong>pausado</strong>, haz clic en "Restore" o "Resume" para reactivarlo</li>
-                      <li>Si el proyecto fue <strong>eliminado</strong>, necesitas crear uno nuevo:
-                        <ul className="ml-4 mt-1 list-disc space-y-1">
-                          <li>Haz clic en "New Project"</li>
-                          <li>Completa el formulario y espera 1-2 minutos</li>
-                          <li>Copia la nueva URL y keys desde Settings → API</li>
-                          <li>Actualiza tu archivo <code className="bg-yellow-100 px-1 rounded">.env.local</code></li>
-                        </ul>
-                      </li>
-                      <li>Ejecuta los scripts SQL en el SQL Editor de Supabase</li>
-                      <li>Reinicia el servidor de desarrollo</li>
-                    </ol>
-                  ) : isDomainNotFound ? (
-                    <ol className="text-xs text-yellow-700 mt-1 list-decimal list-inside space-y-2">
-                      <li>Ve a <a href="https://supabase.com/dashboard" target="_blank" rel="noopener noreferrer" className="underline font-medium">https://supabase.com/dashboard</a> e inicia sesión</li>
-                      <li>Crea un nuevo proyecto o selecciona uno existente</li>
-                      <li>Ve a Settings → API y copia la <strong>Project URL</strong> y la <strong>anon public key</strong></li>
-                      <li>Actualiza tu archivo <code className="bg-yellow-100 px-1 rounded">.env.local</code> con las nuevas credenciales:
-                        <pre className="mt-1 p-2 bg-yellow-100 rounded text-[10px] overflow-x-auto">
-{`NEXT_PUBLIC_SUPABASE_URL=https://tu-proyecto.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=tu_anon_key_aqui`}
-                        </pre>
-                      </li>
-                      <li>Ejecuta los scripts SQL en el SQL Editor de Supabase (ver archivo SOLUCION_SUPABASE.md)</li>
-                      <li>Reinicia el servidor de desarrollo</li>
-                    </ol>
-                  ) : (
-                    <ul className="text-xs text-yellow-700 mt-1 list-disc list-inside space-y-1">
-                      <li>Verifica que las tablas 'categories' y 'products' existan en Supabase</li>
-                      <li>Verifica las variables de entorno NEXT_PUBLIC_SUPABASE_URL y NEXT_PUBLIC_SUPABASE_ANON_KEY</li>
-                      <li>Ejecuta los scripts SQL en el orden: 001-create-tables.sql, 002-row-level-security.sql</li>
-                      <li>Verifica que las políticas RLS permitan lectura pública de categorías y productos</li>
-                    </ul>
-                  )}
-                </div>
-              </div>
-            )}
-            <Button 
-              className="mt-6 bg-red-600 hover:bg-red-700 text-white rounded-lg px-8 py-6 text-base font-medium" 
-              asChild
-            >
-              <Link href="/">Reintentar</Link>
-            </Button>
-          </div>
-        </div>
-      </div>
-    )
-  }
+  // Adaptar nombres de campos para que el resto del componente no cambie
+  const categories = categoriesRaw.map((cat) => ({
+    ...cat,
+    image_url: cat.imageUrl,
+  }))
+
+  const products = productsRaw.map((product) => ({
+    ...product,
+    image_url: product.imageUrl,
+    categories: product.category ? { name: product.category.name } : null,
+    isNew: product.isNew || false,
+  }))
 
   // Asegurar que products y categories sean arrays, incluso si son null/undefined
   const safeProducts = products || []
   const safeCategories = categories || []
-  const featuredProducts = safeProducts.filter((p) => p?.featured).slice(0, 3) || []
+  const featuredProducts = safeProducts.filter((p) => p?.featured) || []
 
   return (
     <div className="min-h-screen">
@@ -272,44 +140,51 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=tu_anon_key_aqui`}
 
       {/* Productos Destacados */}
       {featuredProducts.length > 0 && (
-        <section className="py-16">
+        <section className="py-12">
           <div className="container mx-auto px-4 text-center">
-            <h2 className="mb-2 text-3xl font-bold">Productos Destacados</h2>
-            <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3 mt-8">
-              {featuredProducts.map((product) => (
-                <ProductCard key={product.id} {...product} price={Number(product.price)} imageUrl={product.image_url || "/placeholder.svg"} />
+            <h2 className="mb-6 text-3xl font-bold">Productos Destacados</h2>
+            <div className="grid gap-4 grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
+              {featuredProducts.map((product, i) => (
+                <ProductCard key={product.id} {...product} price={Number(product.price)} imageUrl={getProductImageUrl(product.image_url, product.name, product.categories?.name)} isNew={product.isNew} priority={i < 3} />
               ))}
             </div>
           </div>
         </section>
       )}
 
-      {/* Categorías */}
-      <section id="categorias" className="bg-muted/30 py-16">
-        <div className="container mx-auto px-4 text-center">
-          <h2 className="mb-8 text-3xl font-bold">Categorías</h2>
-          <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-            {safeCategories.length > 0 ? (
-              safeCategories.map((cat) => (
-                <CategoryCard key={cat.id} {...cat} imageUrl={cat.image_url || "/placeholder.svg"} />
-              ))
-            ) : (
-              <div className="col-span-full text-center py-8">
-                <p className="text-muted-foreground">No hay categorías disponibles</p>
+      {/* Categorías - filtro simple sin imágenes */}
+      <section id="categorias" className="bg-muted/30 py-12">
+        <div className="container mx-auto px-4">
+          {safeCategories.length > 0 ? (
+            <div className="flex items-center gap-3">
+              <span className="text-sm font-medium text-muted-foreground shrink-0">
+                Filtrar por:
+              </span>
+              <div className="w-full max-w-xs">
+                <HomeCategorySelect
+                  categories={safeCategories.map((cat) => cat.name)}
+                  selectedCategory={params.categoria}
+                />
               </div>
-            )}
-          </div>
+            </div>
+          ) : (
+            <div className="text-center py-8">
+              <p className="text-muted-foreground">No hay categorías disponibles</p>
+            </div>
+          )}
         </div>
       </section>
 
       {/* Catálogo Completo */}
       <section id="productos" className="py-16">
         <div className="container mx-auto px-4">
-          <h2 className="mb-8 text-3xl font-bold">Todos los Productos</h2>
+          <h2 className="mb-8 text-3xl font-bold">
+            {params.categoria ? params.categoria : "Todos los Productos"}
+          </h2>
           <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             {safeProducts.length > 0 ? (
               safeProducts.map((product) => (
-                <ProductCard key={product.id} {...product} price={Number(product.price)} imageUrl={product.image_url || "/placeholder.svg"} />
+                <ProductCard key={product.id} {...product} price={Number(product.price)} imageUrl={getProductImageUrl(product.image_url, product.name, product.categories?.name)} isNew={product.isNew} />
               ))
             ) : (
               <div className="col-span-full text-center py-8">
@@ -320,34 +195,7 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=tu_anon_key_aqui`}
         </div>
       </section>
 
-      {/* Footer con enlace seguro */}
-      <footer className="border-t bg-muted/50 py-12">
-        <div className="container mx-auto px-4 grid gap-8 md:grid-cols-4">
-          <div className="md:col-span-2">
-            <div className="flex items-center gap-2 mb-4">
-              <Snowflake className="h-8 w-8 text-red-600" />
-              <span className="text-xl font-bold">Adornos CBK</span>
-            </div>
-            <p className="text-sm text-muted-foreground">Haciendo tu Navidad especial desde el primer adorno.</p>
-          </div>
-          <div>
-            <h4 className="font-bold mb-4">Enlaces</h4>
-            <ul className="text-sm space-y-2">
-              <li><Link href="/" className="hover:text-red-600">Inicio</Link></li>
-              {isAdmin && (
-                <li><Link href="/admin/dashboard" className="text-red-600 font-bold">Admin</Link></li>
-              )}
-            </ul>
-          </div>
-          <div>
-            <h4 className="font-bold mb-4">Cuenta</h4>
-            <ul className="text-sm space-y-2 text-muted-foreground">
-              <li><Link href="/auth/login" className="hover:text-foreground">Iniciar Sesión</Link></li>
-              <li><Link href="/cliente/dashboard" className="hover:text-foreground">Mi Perfil</Link></li>
-            </ul>
-          </div>
-        </div>
-      </footer>
+      <Footer isAdmin={isAdmin} />
     </div>
   )
 }

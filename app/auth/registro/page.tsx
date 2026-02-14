@@ -2,7 +2,6 @@
 
 import type React from "react"
 
-import { createClient } from "@/lib/supabase/client"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -10,8 +9,9 @@ import { Label } from "@/components/ui/label"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { useState } from "react"
-import { Snowflake, Mail, MessageCircle } from "lucide-react"
+import { Snowflake } from "lucide-react"
 import { toast } from "sonner"
+import { signIn } from "next-auth/react"
 
 export default function RegistroPage() {
   const [email, setEmail] = useState("")
@@ -20,64 +20,41 @@ export default function RegistroPage() {
   const [phone, setPhone] = useState("")
   const [error, setError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
-  const [useOTP, setUseOTP] = useState(false)
-  const [otpMethod, setOtpMethod] = useState<"email" | "whatsapp">("email")
   const router = useRouter()
 
   const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault()
-    const supabase = createClient()
     setIsLoading(true)
     setError(null)
 
     try {
-      if (useOTP && otpMethod === "email") {
-        // Registro con OTP por email
-        if (!email) {
-          throw new Error("Por favor ingresa tu correo electrónico")
-        }
-
-        const { error } = await supabase.auth.signInWithOtp({
-          email,
-          options: {
-            data: {
-              full_name: fullName,
-              phone: phone,
-            },
-            emailRedirectTo:
-              process.env.NEXT_PUBLIC_DEV_SUPABASE_REDIRECT_URL || `${window.location.origin}/cliente/dashboard`,
-            shouldCreateUser: true,
-          },
-        })
-
-        if (error) throw error
-
-        toast.success("Código OTP enviado. Revisa tu correo.")
-        router.push(`/auth/verificar-otp?email=${encodeURIComponent(email)}`)
-      } else {
-        // Registro tradicional con contraseña
-        if (!password || password.length < 6) {
-          throw new Error("La contraseña debe tener al menos 6 caracteres")
-        }
-
-        const { error } = await supabase.auth.signUp({
-          email,
-          password,
-          options: {
-            data: {
-              full_name: fullName,
-              phone: phone,
-            },
-            emailRedirectTo:
-              process.env.NEXT_PUBLIC_DEV_SUPABASE_REDIRECT_URL || `${window.location.origin}/cliente/dashboard`,
-          },
-        })
-        
-        if (error) throw error
-        
-        toast.success("Cuenta creada. Revisa tu correo para verificar tu email.")
-        router.push("/auth/verificacion-email")
+      if (!password || password.length < 6) {
+        throw new Error("La contraseña debe tener al menos 6 caracteres")
       }
+
+      const response = await fetch("/api/auth/registro", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password, fullName, phone }),
+      })
+      const data = await response.json()
+      if (!response.ok) {
+        throw new Error(data.error || "Ocurrió un error al registrar")
+      }
+
+      // Intentar enviar código OTP de verificación al correo
+      try {
+        await fetch("/api/auth/send-verification-otp", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email }),
+        })
+      } catch (e) {
+        console.error("Error enviando OTP de verificación:", e)
+      }
+
+      toast.success("Cuenta creada correctamente. Te enviamos un código para verificar tu correo.")
+      router.push(`/auth/verificar-otp?email=${encodeURIComponent(email)}&method=email`)
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : "Ocurrió un error"
       setError(errorMessage)
@@ -128,6 +105,7 @@ export default function RegistroPage() {
                     required
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
+                    autoComplete="off"
                   />
                 </div>
                 <div className="grid gap-2">
@@ -141,67 +119,18 @@ export default function RegistroPage() {
                   />
                 </div>
                 <div className="grid gap-2">
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      id="use-otp"
-                      checked={useOTP}
-                      onChange={(e) => setUseOTP(e.target.checked)}
-                      className="h-4 w-4 rounded border-gray-300"
-                    />
-                    <Label htmlFor="use-otp" className="text-sm font-normal cursor-pointer">
-                      Usar código OTP en lugar de contraseña
-                    </Label>
-                  </div>
+                  <Label htmlFor="password">Contraseña</Label>
+                  <Input
+                    id="password"
+                    type="password"
+                    required
+                    minLength={6}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    autoComplete="new-password"
+                  />
+                  <p className="text-xs text-muted-foreground">Mínimo 6 caracteres</p>
                 </div>
-                {!useOTP && (
-                  <div className="grid gap-2">
-                    <Label htmlFor="password">Contraseña</Label>
-                    <Input
-                      id="password"
-                      type="password"
-                      required
-                      minLength={6}
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                    />
-                    <p className="text-xs text-muted-foreground">Mínimo 6 caracteres</p>
-                  </div>
-                )}
-                {useOTP && (
-                  <div className="grid gap-2">
-                    <Label>Método de envío</Label>
-                    <div className="flex gap-2">
-                      <Button
-                        type="button"
-                        variant={otpMethod === "email" ? "default" : "outline"}
-                        className="flex-1"
-                        onClick={() => setOtpMethod("email")}
-                      >
-                        <Mail className="mr-2 h-4 w-4" />
-                        Email
-                      </Button>
-                      <Button
-                        type="button"
-                        variant={otpMethod === "whatsapp" ? "default" : "outline"}
-                        className="flex-1"
-                        onClick={() => {
-                          setOtpMethod("whatsapp")
-                          toast.info("WhatsApp próximamente. Usando Email por ahora.")
-                          setOtpMethod("email")
-                        }}
-                        disabled
-                      >
-                        <MessageCircle className="mr-2 h-4 w-4" />
-                        WhatsApp
-                        <span className="ml-1 text-xs">(Próximamente)</span>
-                      </Button>
-                    </div>
-                    <p className="text-xs text-muted-foreground">
-                      Te enviaremos un código de 6 dígitos por {otpMethod === "email" ? "correo" : "WhatsApp"}
-                    </p>
-                  </div>
-                )}
                 {error && <div className="rounded-md bg-red-50 p-3 text-sm text-red-600">{error}</div>}
                 <Button type="submit" className="w-full bg-red-600 hover:bg-red-700" disabled={isLoading}>
                   {isLoading ? "Creando cuenta..." : "Crear Cuenta"}

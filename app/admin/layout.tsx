@@ -1,22 +1,21 @@
 import type React from "react"
-import { createClient } from "@/lib/supabase/server"
+import { getServerSession } from "next-auth"
+import { authOptions } from "@/lib/auth/config"
 import { redirect } from "next/navigation"
 import { Header } from "@/components/header"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import Link from "next/link"
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
-  const supabase = await createClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
+  const session = await getServerSession(authOptions)
 
-  if (!user) {
+  if (!session) {
     redirect("/auth/login")
   }
 
-  // TODO: En producción, agregar verificación de rol de administrador
-  // Por ahora, cualquier usuario autenticado puede acceder
+  if (session.user?.role !== "admin") {
+    redirect("/")
+  }
 
   return (
     <div className="min-h-screen">

@@ -1,47 +1,44 @@
-// app/api/payments/[transactionId]/route.ts
-import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase/server';
+import { NextRequest, NextResponse } from "next/server"
+import { getServerSession } from "next-auth"
+import { authOptions } from "@/lib/auth/config"
+import { prisma } from "@/lib/db/prisma"
 
 export async function GET(
-  request: NextRequest,
-  { params }: { params: Promise<{ transactionId: string }> }
+  _request: NextRequest,
+  { params }: { params: Promise<{ transactionId: string }> },
 ) {
   try {
-    const { transactionId } = await params;
-    const supabase = await createClient();
-    
-    const { data: { user }, error: authError } = await supabase.auth.getUser();
-    if (authError || !user) {
-      return NextResponse.json(
-        { error: 'No autorizado' },
-        { status: 401 }
-      );
+    const { transactionId } = await params
+    const session = await getServerSession(authOptions)
+    const userId = (session?.user as any)?.id as string | undefined
+
+    if (!userId) {
+      return NextResponse.json({ error: "No autorizado" }, { status: 401 })
     }
 
-    const { data: transaction, error } = await supabase
-      .from('transactions')
-      .select('*')
-      .eq('id', transactionId)
-      .eq('user_id', user.id)
-      .single();
+    const transaction = await prisma.transaction.findFirst({
+      where: {
+        id: transactionId,
+        userId,
+      },
+    })
 
-    if (error || !transaction) {
+    if (!transaction) {
       return NextResponse.json(
-        { error: 'Transacción no encontrada' },
-        { status: 404 }
-      );
+        { error: "Transacción no encontrada" },
+        { status: 404 },
+      )
     }
 
     return NextResponse.json({
       success: true,
       transaction,
-    });
-
+    })
   } catch (error: any) {
-    console.error('Error consultando transacción:', error);
+    console.error("Error consultando transacción:", error)
     return NextResponse.json(
       { error: error.message },
-      { status: 500 }
-    );
+      { status: 500 },
+    )
   }
 }

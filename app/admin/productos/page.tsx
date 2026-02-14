@@ -1,9 +1,7 @@
 "use client"
 
 import type React from "react"
-
 import { useEffect, useState } from "react"
-import { createClient } from "@/lib/supabase/client"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -29,18 +27,23 @@ interface Product {
   name: string
   description: string | null
   price: number
+  discountPercent: number | null
+  finalPrice: number
   stock: number
-  category_id: string | null
-  image_url: string | null
-  is_active: boolean
+  categoryId: string | null
+  imageUrl: string | null
+  isActive: boolean
   featured: boolean
-  categories?: { name: string }
+  isNew: boolean
+  category?: { id: string; name: string } | null
 }
 
 interface Category {
   id: string
   name: string
 }
+
+const NO_CATEGORY_VALUE = "__none__"
 
 export default function AdminProductosPage() {
   const [products, setProducts] = useState<Product[]>([])
@@ -54,11 +57,13 @@ export default function AdminProductosPage() {
     name: "",
     description: "",
     price: "",
+    discountPercent: "",
     stock: "",
-    category_id: "",
-    image_url: "",
-    is_active: true,
+    categoryId: "",
+    imageUrl: "",
+    isActive: true,
     featured: false,
+    isNew: false,
   })
 
   useEffect(() => {
@@ -67,16 +72,29 @@ export default function AdminProductosPage() {
 
   const loadData = async () => {
     setIsLoading(true)
-    const supabase = createClient()
+    try {
+      const [productsRes, categoriesRes] = await Promise.all([
+        fetch("/api/admin/products"),
+        fetch("/api/admin/categories"),
+      ])
 
-    const [{ data: productsData }, { data: categoriesData }] = await Promise.all([
-      supabase.from("products").select("*, categories(name)").order("created_at", { ascending: false }),
-      supabase.from("categories").select("*").order("name"),
-    ])
+      if (!productsRes.ok || !categoriesRes.ok) {
+        throw new Error("Error al cargar datos")
+      }
 
-    setProducts(productsData || [])
-    setCategories(categoriesData || [])
-    setIsLoading(false)
+      const [productsData, categoriesData] = await Promise.all([
+        productsRes.json(),
+        categoriesRes.json(),
+      ])
+
+      setProducts(productsData)
+      setCategories(categoriesData)
+    } catch (error) {
+      console.error("Error loading data:", error)
+      toast.error("Error al cargar los datos")
+    } finally {
+      setIsLoading(false)
+    }
   }
 
   const openAddDialog = () => {
@@ -85,12 +103,14 @@ export default function AdminProductosPage() {
       name: "",
       description: "",
       price: "",
+      discountPercent: "",
       stock: "",
-      category_id: "",
-      image_url: "",
-      is_active: true,
-      featured: false,
-    })
+      categoryId: "",
+    imageUrl: "",
+    isActive: true,
+    featured: false,
+    isNew: false,
+  })
     setIsDialogOpen(true)
   }
 
@@ -100,69 +120,106 @@ export default function AdminProductosPage() {
       name: product.name,
       description: product.description || "",
       price: product.price.toString(),
+      discountPercent: product.discountPercent?.toString() || "",
       stock: product.stock.toString(),
-      category_id: product.category_id || "",
-      image_url: product.image_url || "",
-      is_active: product.is_active,
+      categoryId: product.categoryId || "",
+      imageUrl: product.imageUrl || "",
+      isActive: product.isActive,
       featured: product.featured,
+      isNew: product.isNew,
     })
     setIsDialogOpen(true)
   }
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!formData.name || !formData.price || !formData.stock) {
+    if (!formData.name.trim() || !formData.price || !formData.stock) {
       toast.error("Por favor completa todos los campos requeridos")
       return
     }
 
     setIsSaving(true)
-    const supabase = createClient()
+    try {
+      const url = editingProduct ? `/api/admin/products/${editingProduct.id}` : "/api/admin/products"
+      const method = editingProduct ? "PATCH" : "POST"
 
-    const productData = {
-      name: formData.name,
-      description: formData.description || null,
-      price: Number.parseFloat(formData.price),
-      stock: Number.parseInt(formData.stock),
-      category_id: formData.category_id || null,
-      image_url: formData.image_url || null,
-      is_active: formData.is_active,
-      featured: formData.featured,
-    }
+      const productData: any = {
+        name: formData.name.trim(),
+        description: formData.description.trim() || null,
+        price: parseFloat(formData.price),
+        stock: parseInt(formData.stock),
+        categoryId: formData.categoryId || null,
+        imageUrl: formData.imageUrl.trim() || null,
+        isActive: formData.isActive,
+        featured: formData.featured,
+        isNew: formData.isNew,
+      }
 
-    let error
-    if (editingProduct) {
-      const result = await supabase.from("products").update(productData).eq("id", editingProduct.id)
-      error = result.error
-    } else {
-      const result = await supabase.from("products").insert(productData)
-      error = result.error
-    }
+      // Solo incluir discountPercent si tiene valor
+      if (formData.discountPercent && formData.discountPercent.trim() !== "") {
+        const discount = parseFloat(formData.discountPercent)
+        if (discount < 0 || discount > 100) {
+          toast.error("El descuento debe estar entre 0 y 100%")
+          setIsSaving(false)
+          return
+        }
+        productData.discountPercent = discount
+      } else {
+        productData.discountPercent = null
+      }
 
-    if (error) {
-      console.error("[v0] Error saving product:", error)
-      toast.error("Error al guardar el producto")
-    } else {
+      const response = await fetch(url, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(productData),
+      })
+
+      if (!response.ok) {
+        const error = await response.json()
+        throw new Error(error.error || "Error al guardar el producto")
+      }
+
       toast.success(editingProduct ? "Producto actualizado" : "Producto creado")
       setIsDialogOpen(false)
       loadData()
+    } catch (error: any) {
+      console.error("Error saving product:", error)
+      toast.error(error.message || "Error al guardar el producto")
+    } finally {
+      setIsSaving(false)
     }
-    setIsSaving(false)
   }
 
   const handleDelete = async (productId: string) => {
-    if (!confirm("¿Estás seguro de eliminar este producto?")) return
+    if (!confirm("¿Estás seguro de eliminar este producto?")) {
+      return
+    }
 
-    const supabase = createClient()
-    const { error } = await supabase.from("products").delete().eq("id", productId)
+    try {
+      const response = await fetch(`/api/admin/products/${productId}`, {
+        method: "DELETE",
+      })
 
-    if (error) {
-      console.error("[v0] Error deleting product:", error)
-      toast.error("Error al eliminar el producto")
-    } else {
+      if (!response.ok) {
+        const error = await response.json()
+        throw new Error(error.error || "Error al eliminar el producto")
+      }
+
       toast.success("Producto eliminado")
       loadData()
+    } catch (error: any) {
+      console.error("Error deleting product:", error)
+      toast.error(error.message || "Error al eliminar el producto")
     }
+  }
+
+  const calculateFinalPrice = () => {
+    const price = parseFloat(formData.price) || 0
+    const discount = parseFloat(formData.discountPercent) || 0
+    if (discount > 0 && discount <= 100) {
+      return price * (1 - discount / 100)
+    }
+    return price
   }
 
   if (isLoading) {
@@ -200,8 +257,10 @@ export default function AdminProductosPage() {
                 <Input
                   id="name"
                   value={formData.name}
-                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                  onChange={(e) => setFormData({ ...formData, name: e.target.value.toUpperCase() })}
                   required
+                  className="uppercase"
+                  style={{ textTransform: "uppercase" }}
                 />
               </div>
               <div className="grid gap-2">
@@ -227,27 +286,51 @@ export default function AdminProductosPage() {
                   />
                 </div>
                 <div className="grid gap-2">
-                  <Label htmlFor="stock">Stock *</Label>
+                  <Label htmlFor="discountPercent">Descuento (%)</Label>
                   <Input
-                    id="stock"
+                    id="discountPercent"
                     type="number"
+                    step="0.01"
                     min="0"
-                    value={formData.stock}
-                    onChange={(e) => setFormData({ ...formData, stock: e.target.value })}
-                    required
+                    max="100"
+                    value={formData.discountPercent}
+                    onChange={(e) => setFormData({ ...formData, discountPercent: e.target.value })}
+                    placeholder="0-100"
                   />
+                  {formData.discountPercent && parseFloat(formData.discountPercent) > 0 && (
+                    <p className="text-xs text-muted-foreground">
+                      Precio final: ${calculateFinalPrice().toFixed(2)}
+                    </p>
+                  )}
                 </div>
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="stock">Stock *</Label>
+                <Input
+                  id="stock"
+                  type="number"
+                  min="0"
+                  value={formData.stock}
+                  onChange={(e) => setFormData({ ...formData, stock: e.target.value })}
+                  required
+                />
               </div>
               <div className="grid gap-2">
                 <Label htmlFor="category">Categoría</Label>
                 <Select
-                  value={formData.category_id}
-                  onValueChange={(value) => setFormData({ ...formData, category_id: value })}
+                  value={formData.categoryId || NO_CATEGORY_VALUE}
+                  onValueChange={(value) =>
+                    setFormData({
+                      ...formData,
+                      categoryId: value === NO_CATEGORY_VALUE ? "" : value,
+                    })
+                  }
                 >
                   <SelectTrigger>
-                    <SelectValue placeholder="Seleccionar categoría" />
+                    <SelectValue placeholder="Seleccionar categoría (opcional)" />
                   </SelectTrigger>
                   <SelectContent>
+                    <SelectItem value={NO_CATEGORY_VALUE}>Sin categoría</SelectItem>
                     {categories.map((cat) => (
                       <SelectItem key={cat.id} value={cat.id}>
                         {cat.name}
@@ -260,9 +343,9 @@ export default function AdminProductosPage() {
                 <Label htmlFor="image">URL de Imagen</Label>
                 <Input
                   id="image"
-                  value={formData.image_url}
-                  onChange={(e) => setFormData({ ...formData, image_url: e.target.value })}
-                  placeholder="/placeholder.svg?height=400&width=400"
+                  value={formData.imageUrl}
+                  onChange={(e) => setFormData({ ...formData, imageUrl: e.target.value })}
+                  placeholder="https://ejemplo.com/imagen.jpg"
                 />
               </div>
               <div className="flex items-center justify-between rounded-lg border border-border p-4">
@@ -272,8 +355,8 @@ export default function AdminProductosPage() {
                 </div>
                 <Switch
                   id="active"
-                  checked={formData.is_active}
-                  onCheckedChange={(checked) => setFormData({ ...formData, is_active: checked })}
+                  checked={formData.isActive}
+                  onCheckedChange={(checked) => setFormData({ ...formData, isActive: checked })}
                 />
               </div>
               <div className="flex items-center justify-between rounded-lg border border-border p-4">
@@ -285,6 +368,17 @@ export default function AdminProductosPage() {
                   id="featured"
                   checked={formData.featured}
                   onCheckedChange={(checked) => setFormData({ ...formData, featured: checked })}
+                />
+              </div>
+              <div className="flex items-center justify-between rounded-lg border border-border p-4">
+                <div className="space-y-0.5">
+                  <Label htmlFor="isNew">Producto Nuevo</Label>
+                  <p className="text-sm text-muted-foreground">Muestra badge "Nuevo" en la tarjeta</p>
+                </div>
+                <Switch
+                  id="isNew"
+                  checked={formData.isNew}
+                  onCheckedChange={(checked) => setFormData({ ...formData, isNew: checked })}
                 />
               </div>
               <Button type="submit" className="w-full bg-primary hover:bg-primary/90" disabled={isSaving}>
@@ -301,16 +395,28 @@ export default function AdminProductosPage() {
             <Card key={product.id}>
               <CardHeader className="p-0">
                 <div className="relative aspect-square overflow-hidden rounded-t-lg bg-muted">
-                  <Image
-                    src={product.image_url || "/placeholder.svg"}
-                    alt={product.name}
-                    fill
-                    className="object-cover"
-                    sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
-                  />
-                  <div className="absolute right-2 top-2 flex gap-2">
+                  {product.imageUrl ? (
+                    <Image
+                      src={product.imageUrl}
+                      alt={product.name}
+                      fill
+                      className="object-cover"
+                      sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
+                    />
+                  ) : (
+                    <div className="flex h-full items-center justify-center bg-muted text-muted-foreground">
+                      Sin imagen
+                    </div>
+                  )}
+                  <div className="absolute right-2 top-2 flex flex-col gap-2">
                     {product.featured && <Badge className="bg-secondary text-secondary-foreground">Destacado</Badge>}
-                    {!product.is_active && <Badge variant="destructive">Inactivo</Badge>}
+                    {product.isNew && <Badge className="bg-green-600 text-white">Nuevo</Badge>}
+                    {!product.isActive && <Badge variant="destructive">Inactivo</Badge>}
+                    {product.discountPercent && product.discountPercent > 0 && (
+                      <Badge className="bg-orange-600 text-white">
+                        -{product.discountPercent.toFixed(0)}%
+                      </Badge>
+                    )}
                   </div>
                 </div>
               </CardHeader>
@@ -319,8 +425,21 @@ export default function AdminProductosPage() {
                 <p className="mb-3 line-clamp-2 text-sm text-muted-foreground">{product.description}</p>
                 <div className="mb-4 flex items-center justify-between">
                   <div>
-                    <p className="text-xl font-bold text-primary">${Number(product.price).toLocaleString("es-MX")}</p>
-                    <p className="text-xs text-muted-foreground">{product.categories?.name}</p>
+                    {product.discountPercent && product.discountPercent > 0 ? (
+                      <div>
+                        <p className="text-sm text-muted-foreground line-through">
+                          ${product.price.toLocaleString("es-MX", { minimumFractionDigits: 2 })}
+                        </p>
+                        <p className="text-xl font-bold text-green-600">
+                          ${product.finalPrice.toLocaleString("es-MX", { minimumFractionDigits: 2 })}
+                        </p>
+                      </div>
+                    ) : (
+                      <p className="text-xl font-bold text-primary">
+                        ${product.price.toLocaleString("es-MX", { minimumFractionDigits: 2 })}
+                      </p>
+                    )}
+                    <p className="text-xs text-muted-foreground">{product.category?.name || "Sin categoría"}</p>
                   </div>
                   <div className="text-right">
                     <p className={`font-medium ${product.stock <= 5 ? "text-destructive" : "text-foreground"}`}>

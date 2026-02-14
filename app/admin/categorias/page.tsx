@@ -1,9 +1,7 @@
 "use client"
 
 import type React from "react"
-
 import { useEffect, useState } from "react"
-import { createClient } from "@/lib/supabase/client"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -25,7 +23,7 @@ interface Category {
   id: string
   name: string
   description: string | null
-  image_url: string | null
+  imageUrl: string | null
 }
 
 export default function AdminCategoriasPage() {
@@ -38,7 +36,7 @@ export default function AdminCategoriasPage() {
   const [formData, setFormData] = useState({
     name: "",
     description: "",
-    image_url: "",
+    imageUrl: "",
   })
 
   useEffect(() => {
@@ -47,21 +45,24 @@ export default function AdminCategoriasPage() {
 
   const loadCategories = async () => {
     setIsLoading(true)
-    const supabase = createClient()
-    const { data, error } = await supabase.from("categories").select("*").order("name")
-
-    if (error) {
-      console.error("[v0] Error loading categories:", error)
+    try {
+      const response = await fetch("/api/admin/categories")
+      if (!response.ok) {
+        throw new Error("Error al cargar categorías")
+      }
+      const data = await response.json()
+      setCategories(data)
+    } catch (error) {
+      console.error("Error loading categories:", error)
       toast.error("Error al cargar las categorías")
-    } else {
-      setCategories(data || [])
+    } finally {
+      setIsLoading(false)
     }
-    setIsLoading(false)
   }
 
   const openAddDialog = () => {
     setEditingCategory(null)
-    setFormData({ name: "", description: "", image_url: "" })
+    setFormData({ name: "", description: "", imageUrl: "" })
     setIsDialogOpen(true)
   }
 
@@ -70,59 +71,71 @@ export default function AdminCategoriasPage() {
     setFormData({
       name: category.name,
       description: category.description || "",
-      image_url: category.image_url || "",
+      imageUrl: category.imageUrl || "",
     })
     setIsDialogOpen(true)
   }
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!formData.name) {
+    if (!formData.name.trim()) {
       toast.error("El nombre es requerido")
       return
     }
 
     setIsSaving(true)
-    const supabase = createClient()
+    try {
+      const url = editingCategory
+        ? `/api/admin/categories/${editingCategory.id}`
+        : "/api/admin/categories"
+      const method = editingCategory ? "PATCH" : "POST"
 
-    const categoryData = {
-      name: formData.name,
-      description: formData.description || null,
-      image_url: formData.image_url || null,
-    }
+      const response = await fetch(url, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: formData.name.trim(),
+          description: formData.description.trim() || null,
+          imageUrl: formData.imageUrl.trim() || null,
+        }),
+      })
 
-    let error
-    if (editingCategory) {
-      const result = await supabase.from("categories").update(categoryData).eq("id", editingCategory.id)
-      error = result.error
-    } else {
-      const result = await supabase.from("categories").insert(categoryData)
-      error = result.error
-    }
+      if (!response.ok) {
+        const error = await response.json()
+        throw new Error(error.error || "Error al guardar la categoría")
+      }
 
-    if (error) {
-      console.error("[v0] Error saving category:", error)
-      toast.error("Error al guardar la categoría")
-    } else {
       toast.success(editingCategory ? "Categoría actualizada" : "Categoría creada")
       setIsDialogOpen(false)
       loadCategories()
+    } catch (error: any) {
+      console.error("Error saving category:", error)
+      toast.error(error.message || "Error al guardar la categoría")
+    } finally {
+      setIsSaving(false)
     }
-    setIsSaving(false)
   }
 
   const handleDelete = async (categoryId: string) => {
-    if (!confirm("¿Estás seguro de eliminar esta categoría? Los productos asociados quedarán sin categoría.")) return
+    if (!confirm("¿Estás seguro de eliminar esta categoría? Los productos asociados quedarán sin categoría.")) {
+      return
+    }
 
-    const supabase = createClient()
-    const { error } = await supabase.from("categories").delete().eq("id", categoryId)
+    try {
+      const response = await fetch(`/api/admin/categories/${categoryId}`, {
+        method: "DELETE",
+      })
 
-    if (error) {
-      console.error("[v0] Error deleting category:", error)
-      toast.error("Error al eliminar la categoría")
-    } else {
+      if (!response.ok) {
+        const error = await response.json()
+        throw new Error(error.error || "Error al eliminar la categoría")
+      }
+
       toast.success("Categoría eliminada")
       loadCategories()
+    } catch (error: any) {
+      console.error("Error deleting category:", error)
+      toast.error(error.message || "Error al eliminar la categoría")
     }
   }
 
@@ -161,8 +174,10 @@ export default function AdminCategoriasPage() {
                 <Input
                   id="name"
                   value={formData.name}
-                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                  onChange={(e) => setFormData({ ...formData, name: e.target.value.toUpperCase() })}
                   required
+                  className="uppercase"
+                  style={{ textTransform: "uppercase" }}
                 />
               </div>
               <div className="grid gap-2">
@@ -178,9 +193,9 @@ export default function AdminCategoriasPage() {
                 <Label htmlFor="image">URL de Imagen</Label>
                 <Input
                   id="image"
-                  value={formData.image_url}
-                  onChange={(e) => setFormData({ ...formData, image_url: e.target.value })}
-                  placeholder="/placeholder.svg?height=300&width=300"
+                  value={formData.imageUrl}
+                  onChange={(e) => setFormData({ ...formData, imageUrl: e.target.value })}
+                  placeholder="https://ejemplo.com/imagen.jpg"
                 />
               </div>
               <Button type="submit" className="w-full bg-primary hover:bg-primary/90" disabled={isSaving}>
@@ -197,13 +212,19 @@ export default function AdminCategoriasPage() {
             <Card key={category.id}>
               <CardHeader className="p-0">
                 <div className="relative aspect-video overflow-hidden rounded-t-lg bg-muted">
-                  <Image
-                    src={category.image_url || "/placeholder.svg"}
-                    alt={category.name}
-                    fill
-                    className="object-cover"
-                    sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
-                  />
+                  {category.imageUrl ? (
+                    <Image
+                      src={category.imageUrl}
+                      alt={category.name}
+                      fill
+                      className="object-cover"
+                      sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
+                    />
+                  ) : (
+                    <div className="flex h-full items-center justify-center bg-muted text-muted-foreground">
+                      Sin imagen
+                    </div>
+                  )}
                 </div>
               </CardHeader>
               <CardContent className="p-4">

@@ -1,53 +1,67 @@
-import { createClient } from "@/lib/supabase/server"
+import { getServerSession } from "next-auth"
+import { authOptions } from "@/lib/auth/config"
+import { redirect } from "next/navigation"
+import { prisma } from "@/lib/db/prisma"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { 
-  DollarSign, 
-  Package, 
-  ShoppingCart, 
-  TrendingUp, 
-  Users, 
-  PlusCircle, 
-  Tags, 
+import {
+  DollarSign,
+  Package,
+  ShoppingCart,
+  TrendingUp,
+  Users,
+  Tags,
   LayoutDashboard,
-  ArrowRight
+  ArrowRight,
 } from "lucide-react"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
 
 export default async function AdminDashboardPage() {
-  const supabase = await createClient()
+  const session = await getServerSession(authOptions)
 
-  // --- Consultas a la Base de Datos ---
-  const { count: totalProducts } = await supabase
-    .from("products")
-    .select("*", { count: "exact", head: true })
-    .eq("is_active", true)
+  if (!session || session.user?.role !== "admin") {
+    redirect("/auth/login")
+  }
 
-  const { count: totalOrders } = await supabase.from("orders").select("*", { count: "exact", head: true })
+  // Consultas a la base de datos con Prisma
+  const [
+    totalProducts,
+    totalOrders,
+    pendingOrders,
+    totalCustomers,
+    orders,
+    lowStockProducts,
+    recentOrders,
+  ] = await Promise.all([
+    prisma.product.count({ where: { isActive: true } }),
+    prisma.order.count(),
+    prisma.order.count({ where: { status: { in: ["pending", "processing"] } } }),
+    prisma.user.count({ where: { role: "cliente" } }),
+    prisma.order.findMany({
+      where: { paymentStatus: "paid" },
+      select: { totalAmount: true },
+    }),
+    prisma.product.findMany({
+      where: { isActive: true, stock: { lte: 10 } },
+      include: { category: { select: { name: true } } },
+      orderBy: { stock: "asc" },
+      take: 5,
+    }),
+    prisma.order.findMany({
+      include: {
+        user: {
+          select: {
+            name: true,
+            email: true,
+          },
+        },
+      },
+      orderBy: { createdAt: "desc" },
+      take: 5,
+    }),
+  ])
 
-  const { count: pendingOrders } = await supabase
-    .from("orders")
-    .select("*", { count: "exact", head: true })
-    .in("status", ["pending", "processing"])
-
-  const { count: totalCustomers } = await supabase.from("profiles").select("*", { count: "exact", head: true })
-
-  const { data: orders } = await supabase.from("orders").select("total_amount").eq("payment_status", "paid")
-  const totalRevenue = orders?.reduce((sum, order) => sum + Number(order.total_amount), 0) || 0
-
-  const { data: lowStockProducts } = await supabase
-    .from("products")
-    .select("*, categories(name)")
-    .eq("is_active", true)
-    .lte("stock", 10)
-    .order("stock", { ascending: true })
-    .limit(5)
-
-  const { data: recentOrders } = await supabase
-    .from("orders")
-    .select("*, profiles(full_name, email)")
-    .order("created_at", { ascending: false })
-    .limit(5)
+  const totalRevenue = orders.reduce((sum, order) => sum + Number(order.totalAmount), 0)
 
   return (
     <div className="container mx-auto px-4 py-8">
@@ -59,7 +73,7 @@ export default async function AdminDashboardPage() {
           </h1>
           <p className="text-muted-foreground">Gestiona tus productos, categorías y ventas</p>
         </div>
-        
+
         <div className="flex flex-wrap gap-2">
           <Link href="/admin/productos">
             <Button className="bg-red-600 hover:bg-red-700">
@@ -98,7 +112,7 @@ export default async function AdminDashboardPage() {
             <ShoppingCart className="h-4 w-4 text-blue-600" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{totalOrders || 0}</div>
+            <div className="text-2xl font-bold">{totalOrders}</div>
             <p className="text-xs text-muted-foreground">Histórico general</p>
           </CardContent>
         </Card>
@@ -109,7 +123,7 @@ export default async function AdminDashboardPage() {
             <TrendingUp className="h-4 w-4 text-orange-600" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{pendingOrders || 0}</div>
+            <div className="text-2xl font-bold">{pendingOrders}</div>
             <p className="text-xs text-muted-foreground">Por procesar</p>
           </CardContent>
         </Card>
@@ -120,7 +134,7 @@ export default async function AdminDashboardPage() {
             <Package className="h-4 w-4 text-red-600" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{totalProducts || 0}</div>
+            <div className="text-2xl font-bold">{totalProducts}</div>
             <p className="text-xs text-muted-foreground">En catálogo activo</p>
           </CardContent>
         </Card>
@@ -131,7 +145,7 @@ export default async function AdminDashboardPage() {
             <Users className="h-4 w-4 text-purple-600" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{totalCustomers || 0}</div>
+            <div className="text-2xl font-bold">{totalCustomers}</div>
             <p className="text-xs text-muted-foreground">Registrados</p>
           </CardContent>
         </Card>
@@ -147,7 +161,7 @@ export default async function AdminDashboardPage() {
             </Link>
           </CardHeader>
           <CardContent>
-            {lowStockProducts && lowStockProducts.length > 0 ? (
+            {lowStockProducts.length > 0 ? (
               <div className="space-y-4">
                 {lowStockProducts.map((product) => (
                   <div
@@ -156,7 +170,7 @@ export default async function AdminDashboardPage() {
                   >
                     <div className="space-y-1">
                       <p className="font-medium">{product.name}</p>
-                      <p className="text-xs text-muted-foreground">{product.categories?.name}</p>
+                      <p className="text-xs text-muted-foreground">{product.category?.name || "Sin categoría"}</p>
                     </div>
                     <div className="text-right">
                       <p className={`text-lg font-bold ${product.stock <= 5 ? "text-destructive" : "text-orange-600"}`}>
@@ -167,9 +181,7 @@ export default async function AdminDashboardPage() {
                 ))}
               </div>
             ) : (
-              <p className="py-4 text-center text-sm text-muted-foreground">
-                Inventario saludable
-              </p>
+              <p className="py-4 text-center text-sm text-muted-foreground">Inventario saludable</p>
             )}
           </CardContent>
         </Card>
@@ -183,7 +195,7 @@ export default async function AdminDashboardPage() {
             </Link>
           </CardHeader>
           <CardContent>
-            {recentOrders && recentOrders.length > 0 ? (
+            {recentOrders.length > 0 ? (
               <div className="space-y-4">
                 {recentOrders.map((order) => (
                   <div
@@ -191,16 +203,20 @@ export default async function AdminDashboardPage() {
                     className="flex items-center justify-between border-b border-border pb-3 last:border-0"
                   >
                     <div className="space-y-1">
-                      <p className="font-medium text-sm">{order.profiles?.full_name || order.profiles?.email}</p>
+                      <p className="font-medium text-sm">{order.user.name || order.user.email}</p>
                       <p className="text-xs text-muted-foreground">
-                        {new Date(order.created_at).toLocaleDateString("es-MX")}
+                        {new Date(order.createdAt).toLocaleDateString("es-MX")}
                       </p>
                     </div>
                     <div className="text-right">
-                      <p className="font-semibold text-sm">${Number(order.total_amount).toLocaleString("es-MX")}</p>
-                      <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium uppercase ${
-                        order.status === 'pending' ? 'bg-orange-100 text-orange-700' : 'bg-green-100 text-green-700'
-                      }`}>
+                      <p className="font-semibold text-sm">
+                        ${Number(order.totalAmount).toLocaleString("es-MX")}
+                      </p>
+                      <span
+                        className={`text-[10px] px-2 py-0.5 rounded-full font-medium uppercase ${
+                          order.status === "pending" ? "bg-orange-100 text-orange-700" : "bg-green-100 text-green-700"
+                        }`}
+                      >
                         {order.status}
                       </span>
                     </div>

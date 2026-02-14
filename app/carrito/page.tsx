@@ -1,7 +1,6 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { createClient } from "@/lib/supabase/client"
 import { Header } from "@/components/header"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
@@ -12,6 +11,7 @@ import Image from "next/image"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
+import { getProductImageUrl } from "@/lib/product-images"
 
 interface CartItem {
   id: string
@@ -37,30 +37,29 @@ export default function CarritoPage() {
   }, [])
 
   const loadCart = async () => {
-    const supabase = createClient()
-    const {
-      data: { user },
-    } = await supabase.auth.getUser()
-
-    if (!user) {
-      router.push("/auth/login")
-      return
-    }
-
     setIsLoading(true)
-    const { data, error } = await supabase
-      .from("cart_items")
-      .select("*, products(*)")
-      .eq("user_id", user.id)
-      .order("created_at", { ascending: false })
+    try {
+      const res = await fetch("/api/cart")
 
-    if (error) {
-      console.error("[v0] Error loading cart:", error)
+      if (res.status === 401) {
+        router.push("/auth/login")
+        return
+      }
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => null)
+        const message = data?.error || "Error al cargar el carrito"
+        throw new Error(message)
+      }
+
+      const data = await res.json()
+      setCartItems(data.items as CartItem[])
+    } catch (error) {
+      console.error("Error loading cart:", error)
       toast.error("Error al cargar el carrito")
-    } else {
-      setCartItems(data as CartItem[])
+    } finally {
+      setIsLoading(false)
     }
-    setIsLoading(false)
   }
 
   const updateQuantity = async (itemId: string, newQuantity: number, maxStock: number) => {
@@ -71,35 +70,67 @@ export default function CarritoPage() {
     }
 
     setIsUpdating(itemId)
-    const supabase = createClient()
 
-    const { error } = await supabase.from("cart_items").update({ quantity: newQuantity }).eq("id", itemId)
+    try {
+      const res = await fetch("/api/cart", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ itemId, quantity: newQuantity }),
+      })
 
-    if (error) {
-      console.error("[v0] Error updating quantity:", error)
-      toast.error("Error al actualizar cantidad")
-    } else {
+      if (res.status === 401) {
+        router.push("/auth/login")
+        return
+      }
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => null)
+        const message = data?.error || "Error al actualizar cantidad"
+        throw new Error(message)
+      }
+
       setCartItems((items) => items.map((item) => (item.id === itemId ? { ...item, quantity: newQuantity } : item)))
+      window.dispatchEvent(new CustomEvent("cart-updated"))
       toast.success("Cantidad actualizada")
+    } catch (error) {
+      console.error("Error updating quantity:", error)
+      toast.error("Error al actualizar cantidad")
+    } finally {
+      setIsUpdating(null)
     }
-    setIsUpdating(null)
   }
 
   const removeItem = async (itemId: string) => {
     setIsUpdating(itemId)
-    const supabase = createClient()
 
-    const { error } = await supabase.from("cart_items").delete().eq("id", itemId)
+    try {
+      const res = await fetch("/api/cart", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ itemId }),
+      })
 
-    if (error) {
-      console.error("[v0] Error removing item:", error)
-      toast.error("Error al eliminar producto")
-    } else {
+      if (res.status === 401) {
+        router.push("/auth/login")
+        return
+      }
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => null)
+        const message = data?.error || "Error al eliminar producto"
+        throw new Error(message)
+      }
+
       setCartItems((items) => items.filter((item) => item.id !== itemId))
+      window.dispatchEvent(new CustomEvent("cart-updated"))
       toast.success("Producto eliminado del carrito")
       router.refresh()
+    } catch (error) {
+      console.error("Error removing item:", error)
+      toast.error("Error al eliminar producto")
+    } finally {
+      setIsUpdating(null)
     }
-    setIsUpdating(null)
   }
 
   const calculateSubtotal = () => {
@@ -174,7 +205,7 @@ export default function CarritoPage() {
                   <div key={item.id} className="flex gap-4 border-b border-border pb-4 last:border-0 last:pb-0">
                     <div className="relative h-24 w-24 shrink-0 overflow-hidden rounded-md bg-muted">
                       <Image
-                        src={item.products.image_url || "/placeholder.svg"}
+                        src={getProductImageUrl(item.products.image_url, item.products.name)}
                         alt={item.products.name}
                         fill
                         className="object-cover"

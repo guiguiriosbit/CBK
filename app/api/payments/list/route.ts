@@ -1,40 +1,32 @@
-// app/api/payments/list/route.ts
-import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase/server';
+import { NextRequest, NextResponse } from "next/server"
+import { getServerSession } from "next-auth"
+import { authOptions } from "@/lib/auth/config"
+import { prisma } from "@/lib/db/prisma"
 
-export async function GET(request: NextRequest) {
+export async function GET(_request: NextRequest) {
   try {
-    const supabase = await createClient();
-    
-    const { data: { user }, error: authError } = await supabase.auth.getUser();
-    if (authError || !user) {
-      return NextResponse.json(
-        { error: 'No autorizado' },
-        { status: 401 }
-      );
+    const session = await getServerSession(authOptions)
+    const userId = (session?.user as any)?.id as string | undefined
+
+    if (!userId) {
+      return NextResponse.json({ error: "No autorizado" }, { status: 401 })
     }
 
-    const { data: transactions, error } = await supabase
-      .from('transactions')
-      .select('*')
-      .eq('user_id', user.id)
-      .order('created_at', { ascending: false });
-
-    if (error) {
-      throw error;
-    }
+    const transactions = await prisma.transaction.findMany({
+      where: { userId },
+      orderBy: { createdAt: "desc" },
+    })
 
     return NextResponse.json({
       success: true,
       transactions: transactions || [],
-      total: transactions?.length || 0,
-    });
-
+      total: transactions.length,
+    })
   } catch (error: any) {
-    console.error('Error listando transacciones:', error);
+    console.error("Error listando transacciones:", error)
     return NextResponse.json(
       { error: error.message },
-      { status: 500 }
-    );
+      { status: 500 },
+    )
   }
 }

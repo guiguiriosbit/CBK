@@ -1,79 +1,59 @@
 // app/api/payments/create-intent/route.ts
-import { NextRequest, NextResponse } from 'next/server';
-import Stripe from 'stripe';
-import { createClient } from '@/lib/supabase/server';
+import { NextRequest, NextResponse } from "next/server"
+import Stripe from "stripe"
+import { getServerSession } from "next-auth"
+import { authOptions } from "@/lib/auth/config"
+import { prisma } from "@/lib/db/prisma"
 
 if (!process.env.STRIPE_SECRET_KEY) {
-  throw new Error('STRIPE_SECRET_KEY no está configurada en las variables de entorno');
+  throw new Error("STRIPE_SECRET_KEY no está configurada en las variables de entorno")
 }
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
-  apiVersion: '2025-12-15.clover',
-});
+  apiVersion: "2025-12-15.clover",
+})
 
 export async function POST(request: NextRequest) {
   try {
-    const supabase = await createClient();
-    
-    // Verificar autenticación
-    const { data: { user }, error: authError } = await supabase.auth.getUser();
-    if (authError || !user) {
-      return NextResponse.json(
-        { error: 'No autorizado' },
-        { status: 401 }
-      );
+    const session = await getServerSession(authOptions)
+    const userId = (session?.user as any)?.id as string | undefined
+    const email = session?.user?.email ?? undefined
+
+    if (!userId || !email) {
+      return NextResponse.json({ error: "No autorizado" }, { status: 401 })
     }
 
-    const body = await request.json();
-    const { amount, currency = 'mxn', description, metadata } = body;
+    const body = await request.json()
+    const { amount, currency = "mxn", description, metadata } = body
 
-    // Validaciones
     if (!amount || amount <= 0) {
-      return NextResponse.json(
-        { error: 'Monto inválido' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Monto inválido" }, { status: 400 })
     }
 
-    // Crear Payment Intent en Stripe
-    // Stripe acepta pagos de cualquier país por defecto
-    // No hay restricciones geográficas configuradas
     const paymentIntent = await stripe.paymentIntents.create({
-      amount: Math.round(amount * 100), // Stripe usa centavos
+      amount: Math.round(amount * 100),
       currency,
       description,
-      receipt_email: user.email,
-      // No configuramos restricciones de país - acepta pagos de cualquier país
+      receipt_email: email,
       metadata: {
-        userId: user.id,
-        userEmail: user.email!,
+        userId,
+        userEmail: email,
         ...metadata,
       },
-    });
+    })
 
-    // Guardar transacción en Supabase
-    const { data: transaction, error: dbError } = await supabase
-      .from('transactions')
-      .insert({
-        user_id: user.id,
-        order_id: metadata?.orderId || null,
-        stripe_payment_intent_id: paymentIntent.id,
+    const transaction = await prisma.transaction.create({
+      data: {
+        userId,
+        orderId: metadata?.orderId || null,
+        stripePaymentIntentId: paymentIntent.id,
         amount,
         currency,
-        status: 'pending',
+        status: "pending",
         description,
         metadata: metadata || {},
-      })
-      .select()
-      .single();
-
-    if (dbError) {
-      console.error('Error guardando transacción:', dbError);
-      return NextResponse.json(
-        { error: 'Error guardando transacción' },
-        { status: 500 }
-      );
-    }
+      },
+    })
 
     return NextResponse.json({
       success: true,
@@ -81,13 +61,12 @@ export async function POST(request: NextRequest) {
       clientSecret: paymentIntent.client_secret,
       amount,
       currency,
-    });
-
+    })
   } catch (error: any) {
-    console.error('Error creando intención de pago:', error);
+    console.error("Error creando intención de pago:", error)
     return NextResponse.json(
-      { error: error.message || 'Error procesando el pago' },
-      { status: 500 }
-    );
+      { error: error.message || "Error procesando el pago" },
+      { status: 500 },
+    )
   }
 }

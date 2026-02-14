@@ -7,6 +7,7 @@ import { redirect } from "next/navigation"
 import { ArrowLeft, MapPin } from "lucide-react"
 import Link from "next/link"
 import Image from "next/image"
+import { getProductImageUrl } from "@/lib/product-images"
 
 export default async function PedidoDetallePage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
@@ -86,7 +87,7 @@ export default async function PedidoDetallePage({ params }: { params: Promise<{ 
                 <div key={item.id} className="flex gap-4 border-b border-border pb-4 last:border-0 last:pb-0">
                   <div className="relative h-20 w-20 shrink-0 overflow-hidden rounded-md bg-muted">
                     <Image
-                      src={item.products.image_url || "/placeholder.svg"}
+                      src={getProductImageUrl(item.products.image_url, item.products.name)}
                       alt={item.products.name}
                       fill
                       className="object-cover"

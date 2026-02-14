@@ -1,0 +1,145 @@
+// Esquema para Postgres (migración desde Supabase)
+// Prisma usa el driver postgresql
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String    @id @default(uuid())
+  email         String    @unique
+  emailVerified DateTime?
+  passwordHash  String?
+  name          String?
+  phone         String?
+  role          String    @default("cliente")
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  cartItems         CartItem[]
+  orders            Order[]
+  shippingAddresses ShippingAddress[]
+  transactions      Transaction[]
+}
+
+model Category {
+  id          String    @id @default(uuid())
+  name        String    @unique
+  description String?
+  imageUrl    String?
+  createdAt   DateTime  @default(now())
+  products    Product[]
+}
+
+model Product {
+  id               String   @id @default(uuid())
+  name             String
+  description      String?
+  price            Decimal   @db.Decimal(10, 2)
+  discountPercent  Decimal?  @db.Decimal(5, 2) // Porcentaje de descuento (0-100)
+  stock            Int       @default(0)
+  categoryId       String?
+  imageUrl         String?
+  isActive         Boolean   @default(true)
+  featured         Boolean   @default(false)
+  isNew            Boolean   @default(false)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  category         Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  cartItems        CartItem[]
+  orderItems       OrderItem[]
+}
+
+model CartItem {
+  id        String   @id @default(uuid())
+  userId    String
+  productId String
+  quantity  Int      @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, productId])
+}
+
+model ShippingAddress {
+  id              String   @id @default(uuid())
+  userId          String
+  fullName        String?
+  email           String?
+  phoneCountryCode String?  // Ej: +52, +1
+  phone           String?
+  addressLine1    String
+  addressLine2    String?
+  city            String
+  state           String
+  postalCode      String
+  country         String   @default("México")
+  isDefault       Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  orders          Order[]
+}
+
+model Order {
+  id                String   @id @default(uuid())
+  userId            String
+  shippingAddressId String?
+  totalAmount       Decimal  @db.Decimal(10, 2)
+  status            String   @default("pending")
+  paymentStatus     String   @default("pending")
+  notes             String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  shippingAddress   ShippingAddress? @relation(fields: [shippingAddressId], references: [id], onDelete: SetNull)
+  orderItems        OrderItem[]
+  transactions      Transaction[]
+}
+
+model OrderItem {
+  id        String   @id @default(uuid())
+  orderId   String
+  productId String
+  quantity  Int
+  unitPrice Decimal  @db.Decimal(10, 2)
+  subtotal  Decimal  @db.Decimal(10, 2)
+  createdAt DateTime @default(now())
+  order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product   Product  @relation(fields: [productId], references: [id])
+}
+
+model Transaction {
+  id                    String    @id @default(uuid())
+  userId                String
+  orderId               String?
+  stripePaymentIntentId String    @unique
+  amount                Decimal   @db.Decimal(10, 2)
+  currency              String    @default("mxn")
+  status                String    @default("pending")
+  description           String?
+  metadata              Json?
+  completedAt           DateTime?
+  failedAt              DateTime?
+  refundedAt            DateTime?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  order                 Order?    @relation(fields: [orderId], references: [id], onDelete: SetNull)
+}
+
+model OtpCode {
+  id        String   @id @default(uuid())
+  phone     String?  // Para OTP por WhatsApp
+  email     String?  // Para OTP por email
+  code      String
+  expiresAt DateTime
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now())
+}

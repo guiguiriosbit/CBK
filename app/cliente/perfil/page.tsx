@@ -1,14 +1,13 @@
 "use client"
 
 import type React from "react"
-
 import { useEffect, useState } from "react"
-import { createClient } from "@/lib/supabase/client"
+import { useSession } from "next-auth/react"
+import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { useRouter } from "next/navigation"
 import { toast } from "sonner"
 import { ArrowLeft } from "lucide-react"
 import Link from "next/link"
@@ -16,40 +15,49 @@ import Link from "next/link"
 interface Profile {
   id: string
   email: string
-  full_name: string | null
+  name: string | null
   phone: string | null
 }
 
 export default function PerfilPage() {
+  const { data: session, status } = useSession()
+  const router = useRouter()
   const [profile, setProfile] = useState<Profile | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [isSaving, setIsSaving] = useState(false)
-  const router = useRouter()
 
   useEffect(() => {
-    loadProfile()
-  }, [])
-
-  const loadProfile = async () => {
-    const supabase = createClient()
-    const {
-      data: { user },
-    } = await supabase.auth.getUser()
-
-    if (!user) {
+    if (status === "unauthenticated") {
       router.push("/auth/login")
       return
     }
 
-    const { data, error } = await supabase.from("profiles").select("*").eq("id", user.id).single()
-
-    if (error) {
-      console.error("[v0] Error loading profile:", error)
-      toast.error("Error al cargar el perfil")
-    } else {
-      setProfile(data)
+    if (status === "authenticated" && session?.user) {
+      loadProfile()
     }
-    setIsLoading(false)
+  }, [session, status, router])
+
+  const loadProfile = async () => {
+    if (!session?.user) return
+
+    setIsLoading(true)
+    try {
+      const response = await fetch("/api/profile")
+      if (!response.ok) {
+        if (response.status === 401) {
+          router.push("/auth/login")
+          return
+        }
+        throw new Error("Error al cargar el perfil")
+      }
+      const data = await response.json()
+      setProfile(data)
+    } catch (error) {
+      console.error("Error loading profile:", error)
+      toast.error("Error al cargar el perfil")
+    } finally {
+      setIsLoading(false)
+    }
   }
 
   const handleSave = async (e: React.FormEvent) => {
@@ -57,26 +65,31 @@ export default function PerfilPage() {
     if (!profile) return
 
     setIsSaving(true)
-    const supabase = createClient()
-
-    const { error } = await supabase
-      .from("profiles")
-      .update({
-        full_name: profile.full_name,
-        phone: profile.phone,
+    try {
+      const response = await fetch("/api/profile", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: profile.name,
+          phone: profile.phone,
+        }),
       })
-      .eq("id", profile.id)
 
-    if (error) {
-      console.error("[v0] Error updating profile:", error)
-      toast.error("Error al actualizar el perfil")
-    } else {
+      if (!response.ok) {
+        const error = await response.json()
+        throw new Error(error.error || "Error al actualizar el perfil")
+      }
+
       toast.success("Perfil actualizado exitosamente")
+    } catch (error: any) {
+      console.error("Error updating profile:", error)
+      toast.error(error.message || "Error al actualizar el perfil")
+    } finally {
+      setIsSaving(false)
     }
-    setIsSaving(false)
   }
 
-  if (isLoading) {
+  if (status === "loading" || isLoading) {
     return (
       <div className="container mx-auto flex min-h-[60vh] items-center justify-center px-4 py-16">
         <p className="text-muted-foreground">Cargando perfil...</p>
@@ -84,7 +97,7 @@ export default function PerfilPage() {
     )
   }
 
-  if (!profile) {
+  if (!profile || !session) {
     return (
       <div className="container mx-auto flex min-h-[60vh] items-center justify-center px-4 py-16">
         <p className="text-muted-foreground">No se pudo cargar el perfil</p>
@@ -117,12 +130,12 @@ export default function PerfilPage() {
             </div>
 
             <div className="grid gap-2">
-              <Label htmlFor="fullName">Nombre Completo</Label>
+              <Label htmlFor="name">Nombre Completo</Label>
               <Input
-                id="fullName"
+                id="name"
                 type="text"
-                value={profile.full_name || ""}
-                onChange={(e) => setProfile({ ...profile, full_name: e.target.value })}
+                value={profile.name || ""}
+                onChange={(e) => setProfile({ ...profile, name: e.target.value })}
                 placeholder="Juan Pérez"
               />
             </div>
