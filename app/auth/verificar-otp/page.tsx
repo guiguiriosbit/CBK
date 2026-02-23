@@ -5,7 +5,7 @@ import type React from "react"
 import { useState, useEffect, Suspense } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import Link from "next/link"
-import { Snowflake, Mail, ArrowLeft } from "lucide-react"
+import { Snowflake, Mail, ArrowLeft, RefreshCw } from "lucide-react"
 import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
@@ -23,6 +23,7 @@ function VerificarOTPPageContent() {
   const [isLoading, setIsLoading] = useState(false)
   const [canResend, setCanResend] = useState(false)
   const [resendCountdown, setResendCountdown] = useState(0)
+  const [isResending, setIsResending] = useState(false)
 
   useEffect(() => {
     const emailParam = searchParams.get("email")
@@ -77,7 +78,7 @@ function VerificarOTPPageContent() {
   const handleResend = async () => {
     if (!canResend || !email) return
 
-    setIsLoading(true)
+    setIsResending(true)
     setError(null)
 
     try {
@@ -92,7 +93,7 @@ function VerificarOTPPageContent() {
         throw new Error(data.error || "No se pudo reenviar el código")
       }
 
-      toast.success("Se ha reenviado el código a tu correo (o consola del servidor en desarrollo).")
+      toast.success("Código reenviado. Revisa tu correo (o la consola del servidor en desarrollo).")
       setCanResend(false)
       setResendCountdown(60)
     } catch (err: unknown) {
@@ -100,7 +101,7 @@ function VerificarOTPPageContent() {
       setError(errorMessage)
       toast.error(errorMessage)
     } finally {
-      setIsLoading(false)
+      setIsResending(false)
     }
   }
 
@@ -164,7 +165,26 @@ function VerificarOTPPageContent() {
                 {isLoading ? "Verificando..." : "Verificar código"}
               </Button>
 
-              <div className="mt-4 flex items-center justify-between text-sm">
+              <div className="mt-4 rounded-lg border border-red-100 bg-red-50/50 p-3">
+                <p className="mb-2 text-xs font-medium text-red-900">¿No recibiste el código?</p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="w-full border-red-200 text-red-700 hover:bg-red-100 hover:text-red-800"
+                  onClick={handleResend}
+                  disabled={!canResend || isResending || !email}
+                >
+                  <RefreshCw className={`mr-2 h-4 w-4 ${isResending ? "animate-spin" : ""}`} />
+                  {canResend
+                    ? isResending
+                      ? "Reenviando..."
+                      : "Reenviar código al correo"
+                    : `Reenviar en ${resendCountdown}s`}
+                </Button>
+              </div>
+
+              <div className="mt-4 flex items-center justify-center text-sm">
                 <button
                   type="button"
                   className="inline-flex items-center gap-1 text-red-700 hover:underline"
@@ -172,15 +192,6 @@ function VerificarOTPPageContent() {
                 >
                   <ArrowLeft className="h-4 w-4" />
                   Volver a iniciar sesión
-                </button>
-
-                <button
-                  type="button"
-                  onClick={handleResend}
-                  disabled={!canResend || isLoading || !email}
-                  className="text-sm text-red-700 hover:underline disabled:cursor-not-allowed disabled:text-gray-400"
-                >
-                  {canResend ? "Reenviar código" : `Reenviar en ${resendCountdown}s`}
                 </button>
               </div>
             </form>

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server"
-import { Resend } from "resend"
+import nodemailer from "nodemailer"
 import { prisma } from "@/lib/db/prisma"
 
 // Genera un código OTP de 6 dígitos
@@ -122,47 +122,46 @@ export async function POST(request: Request) {
       },
     })
 
-    // Enviar email con Resend
-    const resendApiKey = process.env.RESEND_API_KEY
-    const resendFromEmail = process.env.RESEND_FROM_EMAIL
+    // Enviar email con Gmail (SMTP)
+    const smtpUser = process.env.SMTP_USER
+    const smtpPass = process.env.SMTP_PASS
+    const smtpFrom = process.env.SMTP_FROM || smtpUser
 
-    if (!resendApiKey || !resendFromEmail) {
-      console.error("[OTP] RESEND_API_KEY o RESEND_FROM_EMAIL no están configurados en .env")
-      // Fallback: mostrar código en consola si Resend no está configurado
+    if (!smtpUser || !smtpPass || !smtpFrom) {
+      console.error("[OTP] SMTP_USER, SMTP_PASS o SMTP_FROM no están configurados en .env")
       console.log(`[OTP] Código de verificación para ${email}: ${code}`)
       return NextResponse.json({
         ok: true,
-        message: "Código generado. Revisa la consola del servidor (Resend no está configurado).",
-        warning: "Resend no configurado",
+        message: "Código generado. Revisa la consola del servidor (SMTP no configurado).",
+        warning: "SMTP no configurado",
       })
     }
 
     try {
-      const resend = new Resend(resendApiKey)
+      const transporter = nodemailer.createTransport({
+        service: "gmail",
+        auth: {
+          user: smtpUser,
+          pass: smtpPass,
+        },
+      })
 
-      const { data, error } = await resend.emails.send({
-        from: resendFromEmail,
+      await transporter.sendMail({
+        from: smtpFrom,
         to: email,
         subject: "🔐 Tu código de verificación - Adornos CBK",
         html: getOTPEmailHTML(code, user.name),
       })
 
-      if (error) {
-        console.error("[OTP] Error enviando email con Resend:", error)
-        // Fallback: mostrar código en consola
-        console.log(`[OTP] Código de verificación para ${email}: ${code}`)
-        return NextResponse.json({
-          ok: true,
-          message: "Código generado. Revisa la consola del servidor (error al enviar email).",
-          warning: "Error enviando email",
-        })
-      }
-
-      console.log(`[OTP] Email enviado exitosamente a ${email} (ID: ${data?.id})`)
-    } catch (resendError) {
-      console.error("[OTP] Error inesperado con Resend:", resendError)
-      // Fallback: mostrar código en consola
+      console.log(`[OTP] Email enviado exitosamente a ${email} usando Gmail SMTP`)
+    } catch (smtpError) {
+      console.error("[OTP] Error enviando email con Gmail SMTP:", smtpError)
       console.log(`[OTP] Código de verificación para ${email}: ${code}`)
+      return NextResponse.json({
+        ok: true,
+        message: "Código generado. Revisa la consola del servidor (error al enviar email).",
+        warning: "Error enviando email",
+      })
     }
 
     return NextResponse.json({

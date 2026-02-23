@@ -6,6 +6,8 @@
 export const AUTH_ERROR_MESSAGES: Record<string, string> = {
   CredentialsSignin:
     "No encontramos una cuenta con ese correo o la contraseña es incorrecta. Si no tienes cuenta, regístrate primero.",
+  TWO_FACTOR_REQUIRED:
+    "Se requiere autenticación de dos factores. Serás redirigido para ingresar tu código.",
   OAuthAccountNotLinked:
     "Este correo ya está registrado con otro método. Intenta iniciar sesión de otra forma.",
   OAuthCallback:

@@ -25,6 +25,10 @@ model User {
   orders            Order[]
   shippingAddresses ShippingAddress[]
   transactions      Transaction[]
+
+  // 2FA TOTP
+  totpSecret  String?  @db.Text   // secreto TOTP en base32
+  totpEnabled Boolean  @default(false)
 }
 
 model Category {

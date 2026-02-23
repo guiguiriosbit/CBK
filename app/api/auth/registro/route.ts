@@ -10,10 +10,11 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Correo y contraseña son obligatorios" }, { status: 400 })
     }
 
-    // Normalizar email a minúsculas y trim
+    // Normalizar email y contraseña (trim para que coincida con el login)
     const normalizedEmail = email.toLowerCase().trim()
+    const passwordTrimmed = String(password).trim()
 
-    if (password.length < 6) {
+    if (passwordTrimmed.length < 6) {
       return NextResponse.json({ error: "La contraseña debe tener al menos 6 caracteres" }, { status: 400 })
     }
 
@@ -22,7 +23,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Ya existe una cuenta con este correo" }, { status: 400 })
     }
 
-    const passwordHash = await bcrypt.hash(password, 10)
+    const passwordHash = await bcrypt.hash(passwordTrimmed, 10)
 
     const user = await prisma.user.create({
       data: {
